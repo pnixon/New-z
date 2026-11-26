@@ -235,4 +235,42 @@ class RankingTest {
         // A file saved before topics existed gets the defaults.
         assertEquals(Topics.DEFAULT, ConfigJson.decode("""{"ranking": {"trustWeight": 1.0}}""").ranking.topics)
     }
+
+    @Test
+    fun followedTopicsAddTheInterestWeight() {
+        val topics = listOf(Topic("Space", listOf("rover", "nasa"), followed = true), Topic("Sports", listOf("playoff")))
+        val config = RankingConfig(topics = topics, interestWeight = 0.75)
+        val result = Ranker.rank(
+            listOf(item("Playoff schedule released for the season"), item("Rover lands safely on the plain")), config, NOW,
+        )
+        val rover = result.visible.first()
+        assertEquals("Rover lands safely on the plain", rover.item.title)
+        val interest = rover.contributions.single { it.signal == "Interest" }
+        close(0.75, interest.points)
+        assertEquals("In topics you follow: Space", interest.detail)
+        val other = result.visible.last().contributions.single { it.signal == "Interest" }
+        close(0.0, other.points)
+        assertEquals("In none of the topics you follow", other.detail)
+        // With nothing followed the line is still shown, and says why it is zero.
+        val none = Ranker.rank(listOf(item("Rover lands safely on the plain")), RankingConfig(), NOW).visible.single()
+        assertEquals("You follow no topics yet", none.contributions.single { it.signal == "Interest" }.detail)
+    }
+
+    @Test
+    fun anArticleFoundByATopicsSearchBelongsToThatTopic() {
+        val topics = listOf(Topic("Rust language", listOf("rustlang"), followed = true, search = true))
+        val found = item("Borrow checker gets faster in the next release", tags = listOf(Topics.SEARCH_TAG_PREFIX + "Rust language"))
+        val scored = Ranker.rank(listOf(found), RankingConfig(topics = topics), NOW).visible.single()
+        assertEquals(listOf(TopicMatch("Rust language", "found by this topic's web search")), scored.topics)
+        close(RankingConfig().interestWeight, scored.contributions.single { it.signal == "Interest" }.points)
+        assertEquals("Rust language", topics[0].query)
+        assertEquals("rust 2026", topics[0].copy(searchQuery = " rust 2026 ").query)
+    }
+
+    @Test
+    fun aSiteThatIsOnlySearchedIsNeverFetched() {
+        val source = SourceConfig("Found", "https://found.example.com/", Recipe(FetchKind.NONE, "https://found.example.com/"))
+        val outcome = SourceFetcher.fetch(source, { _, _ -> error("must not fetch") }, now = NOW)
+        assertTrue(outcome is FetchOutcome.Failed)
+    }
 }

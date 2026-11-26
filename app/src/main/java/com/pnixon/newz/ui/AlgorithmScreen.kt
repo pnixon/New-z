@@ -2,6 +2,8 @@
 
 package com.pnixon.newz.ui
 
+import android.Manifest
+import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
@@ -161,6 +163,7 @@ fun AlgorithmPage(vm: MainViewModel, config: RankingConfig) {
                     "+ ${Ranker.fmt(config.trustWeight)} × trust value of the source\n" +
                     "+ ${Ranker.fmt(config.coverageWeight)} × min(other sources, ${config.coverageSaturation}) ÷ ${config.coverageSaturation}\n" +
                     "+ ${Ranker.fmt(config.readWeight)} × (1 if already read)\n" +
+                    "+ ${Ranker.fmt(config.interestWeight)} × (1 if in a topic you follow)\n" +
                     "+ points from each of your rules that match",
                 style = MaterialTheme.typography.bodyMedium,
                 fontFamily = FontFamily.Monospace,
@@ -203,6 +206,10 @@ fun AlgorithmPage(vm: MainViewModel, config: RankingConfig) {
         }
         NumberSetting("Already-read weight", "Added to articles you have opened. Negative moves them down.", config.readWeight, -3.0, 0.0) { v ->
             vm.updateConfig { it.copy(readWeight = v) }
+        }
+
+        NumberSetting("Interest weight", "Added to articles in a topic you follow. Follow topics in the Topics section below.", config.interestWeight, 0.0, 3.0) { v ->
+            vm.updateConfig { it.copy(interestWeight = v) }
         }
 
         Section("Trust values")
@@ -271,7 +278,8 @@ fun AlgorithmPage(vm: MainViewModel, config: RankingConfig) {
         Section("Topics")
         Text(
             "An article is in a topic when one of the topic's keywords appears as a whole word or phrase, in any letter case, in its title, summary or the source's own tags. " +
-                "The front page can be filtered by topic, rules can target topics, and each article's ⓘ shows which keyword matched.",
+                "The front page can be filtered by topic, rules can target topics, and each article's ⓘ shows which keyword matched. " +
+                "Tap a topic to follow it, be notified of new articles, or have a web search bring in articles from sites you have not added.",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
@@ -279,8 +287,16 @@ fun AlgorithmPage(vm: MainViewModel, config: RankingConfig) {
             Row(Modifier.fillMaxWidth().clickable { editingTopic = index }.padding(vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
                     Text(topic.name, style = MaterialTheme.typography.bodyLarge)
+                    val state = listOfNotNull(
+                        "followed".takeIf { topic.followed },
+                        "notifies".takeIf { topic.notify },
+                        "web search every ${topic.searchEveryHours} h for \"${topic.query}\"".takeIf { topic.search },
+                    )
+                    if (state.isNotEmpty()) {
+                        Text(state.joinToString(" · "), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
+                    }
                     Text(
-                        topic.keywords.joinToString(", ").ifEmpty { "No keywords: matches nothing" },
+                        topic.keywords.joinToString(", ").ifEmpty { "No keywords" },
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         maxLines = 2,
@@ -346,11 +362,20 @@ private const val NEW_TOPIC = -1
 private fun TopicDialog(initial: Topic?, onDismiss: () -> Unit, onSave: (Topic) -> Unit) {
     var name by remember { mutableStateOf(initial?.name.orEmpty()) }
     var keywords by remember { mutableStateOf(initial?.keywords?.joinToString(", ").orEmpty()) }
+    var followed by remember { mutableStateOf(initial?.followed ?: false) }
+    var notify by remember { mutableStateOf(initial?.notify ?: false) }
+    var search by remember { mutableStateOf(initial?.search ?: false) }
+    var searchQuery by remember { mutableStateOf(initial?.searchQuery.orEmpty()) }
+    var searchHours by remember { mutableStateOf((initial?.searchEveryHours ?: 6).toString()) }
+    // Android 13 and later ask before an app may post notifications.
+    val askToNotify = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        if (!granted) notify = false
+    }
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(if (initial == null) "Add topic" else "Edit topic") },
         text = {
-            Column {
+            Column(Modifier.verticalScroll(rememberScrollState())) {
                 OutlinedTextField(name, { name = it }, label = { Text("Name") }, singleLine = true, modifier = Modifier.fillMaxWidth())
                 Spacer(Modifier.height(8.dp))
                 OutlinedTextField(
@@ -360,13 +385,49 @@ private fun TopicDialog(initial: Topic?, onDismiss: () -> Unit, onSave: (Topic) 
                     minLines = 3,
                     modifier = Modifier.fillMaxWidth(),
                 )
+                SwitchSetting("Follow", "Articles in this topic gain the interest weight.", followed) { followed = it }
+                SwitchSetting("Notify me", "A notification when a background check finds new articles in this topic.", notify) { on ->
+                    notify = on
+                    if (on && Build.VERSION.SDK_INT >= 33) askToNotify.launch(Manifest.permission.POST_NOTIFICATIONS)
+                }
+                SwitchSetting(
+                    "Web search",
+                    "Search the web for this topic on a schedule and add what it finds. Each search is a paid request on your search key (Settings, Search).",
+                    search,
+                ) { search = it }
+                if (search) {
+                    OutlinedTextField(
+                        searchQuery, { searchQuery = it },
+                        label = { Text("Search for") },
+                        supportingText = { Text("Blank: the topic's name") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    OutlinedTextField(
+                        searchHours, { searchHours = it.filter(Char::isDigit) },
+                        label = { Text("Every (hours)") },
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                }
             }
         },
         confirmButton = {
             TextButton(
                 enabled = name.isNotBlank(),
                 onClick = {
-                    onSave(Topic(name.trim(), keywords.split(",", "\n").map { it.trim() }.filter { it.isNotEmpty() }.distinctBy { it.lowercase() }))
+                    onSave(
+                        Topic(
+                            name = name.trim(),
+                            keywords = keywords.split(",", "\n").map { it.trim() }.filter { it.isNotEmpty() }.distinctBy { it.lowercase() },
+                            followed = followed,
+                            notify = notify,
+                            search = search,
+                            searchQuery = searchQuery.trim(),
+                            searchEveryHours = (searchHours.toIntOrNull() ?: 6).coerceIn(1, 24 * 7),
+                        )
+                    )
                 },
             ) { Text("Save") }
         },

@@ -15,6 +15,7 @@ import com.pnixon.newz.data.JsonStore
 import com.pnixon.newz.data.LogDatabase
 import com.pnixon.newz.data.MIGRATION_1_2
 import com.pnixon.newz.data.SecretStore
+import com.pnixon.newz.data.WebRenderer
 import com.pnixon.newz.data.NewsDatabase
 import com.pnixon.newz.data.Repository
 import kotlinx.coroutines.CoroutineScope
@@ -25,6 +26,7 @@ import newz.core.BrowserSettings
 import newz.core.ModelSettings
 import newz.core.OkHttpFetcher
 import newz.core.RankingConfig
+import newz.core.SearchSettings
 import java.util.concurrent.TimeUnit
 
 class AppContainer(context: Context) {
@@ -38,8 +40,14 @@ class AppContainer(context: Context) {
     val secrets = SecretStore(context)
     val browser = JsonStore(context, "browser.json", BrowserSettings.serializer(), BrowserSettings())
     val filters = FilterListStore(context, http, browser)
-    val repository = Repository(context, db.dao(), logDb.dao(), http, http, models, secrets)
+    val search = JsonStore(context, "search.json", SearchSettings.serializer(), SearchSettings())
+    private val renderer = WebRenderer(context, filters, browser)
+    val repository = Repository(
+        context, db.dao(), logDb.dao(), http, http, models, secrets, config, search,
+        render = { url, userAgent -> renderer.render(url, userAgent) },
+    )
 }
+
 
 class NewzApp : Application() {
     lateinit var container: AppContainer
@@ -60,7 +68,11 @@ class RefreshWorker(context: Context, params: WorkerParameters) : CoroutineWorke
         val repository = (applicationContext as NewzApp).container.repository
         return try {
             repository.seedIfNeeded()
-            repository.refresh(force = false)
+            val container = (applicationContext as NewzApp).container
+            val summary = repository.refresh(force = false)
+            runCatching {
+                Notifier.notifyNew(applicationContext, repository.rankItems(summary.newIds), container.config.flow.value.topics)
+            }
             runCatching { (applicationContext as NewzApp).container.filters.update(force = false) }
             Result.success()
         } catch (e: Exception) {

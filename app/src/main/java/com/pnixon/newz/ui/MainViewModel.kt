@@ -35,6 +35,8 @@ import newz.core.RankResult
 import newz.core.Ranker
 import newz.core.ModelSettings
 import newz.core.RankingConfig
+import newz.core.SearchOutcome
+import newz.core.SearchSettings
 import newz.core.Recipe
 import newz.core.WriteResult
 import newz.core.SourceConfig
@@ -62,6 +64,11 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     val modelCalls: StateFlow<List<ModelCallSummary>> =
         repository.modelCalls().stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    val search: StateFlow<SearchSettings> = container.search.flow
+
+    private val _hasSearchKey = MutableStateFlow(container.secrets.has(SecretStore.SEARCH_API_KEY))
+    val hasSearchKey: StateFlow<Boolean> = _hasSearchKey
 
     val browser: StateFlow<BrowserSettings> = container.browser.flow
     val blocker: StateFlow<AdBlocker> = container.filters.blocker
@@ -128,7 +135,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 if (announce) {
                     val failed = if (summary.failures > 0) ", ${summary.failures} failed" else ""
                     val repaired = if (summary.repaired > 0) ", ${summary.repaired} repaired by the model" else ""
-                    say("${summary.newArticles} new from ${summary.sourcesChecked} sources$failed$repaired")
+                    val searched = if (summary.searches > 0) ", ${summary.searches} topic searches run" else ""
+                    say("${summary.newArticles} new from ${summary.sourcesChecked} sources$failed$repaired$searched")
                 }
             } catch (e: Exception) {
                 say("Refresh failed: ${e.message}")
@@ -180,6 +188,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 val imported = ConfigJson.decode(text)
                 container.config.set(imported.ranking)
                 container.models.set(imported.models)
+                container.search.set(imported.search)
                 container.browser.set(imported.browser)
                 container.filters.reload()
                 val (updated, added) = repository.importSources(imported.sources)
@@ -221,10 +230,10 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
      * Has the model write a recipe for [pageUrl]. For an existing source the
      * model is also shown [current] and that source's recent headlines.
      */
-    suspend fun askModel(pageUrl: String, sourceId: Long?, current: Recipe): WriteResult =
+    suspend fun askModel(pageUrl: String, sourceId: Long?, current: Recipe, rendered: Boolean = false): WriteResult =
         runCatching {
             val repair = sourceId?.let { repository.repairContext(it, current) }
-            repository.askModel(pageUrl, sourceId, repair)
+            repository.askModel(pageUrl, sourceId, repair, rendered)
         }.getOrElse { WriteResult(null, emptyList(), emptyList(), it.message ?: "The request failed") }
 
     fun historyFor(sourceId: Long): Flow<List<RecipeHistoryEntity>> = repository.historyFor(sourceId)
@@ -254,6 +263,37 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                     )
                 )
             }
+        }
+    }
+
+    fun saveSearch(settings: SearchSettings) = container.search.set(settings)
+
+    fun setSearchKey(value: String?) {
+        val ok = runCatching { container.secrets.set(SecretStore.SEARCH_API_KEY, value) }.isSuccess
+        _hasSearchKey.value = container.secrets.has(SecretStore.SEARCH_API_KEY)
+        say(
+            when {
+                !ok -> "The key could not be stored on this phone"
+                value.isNullOrBlank() -> "Key removed"
+                else -> "Key saved on this phone"
+            }
+        )
+    }
+
+    suspend fun testSearch(query: String): SearchOutcome =
+        runCatching { repository.testSearch(query) }.getOrElse { SearchOutcome(emptyList(), "", it.message ?: "The test failed") }
+
+    /** Runs every topic's web search now, whatever its schedule. Each one is a paid request. */
+    fun runSearchesNow() {
+        viewModelScope.launch {
+            val result = runCatching { repository.runSearches(force = true) }
+            tick()
+            say(
+                result.fold(
+                    onSuccess = { (ran, found) -> if (ran == 0) "No searches ran. Check the key and that a topic has search switched on." else "$ran searches run, ${found.size} new articles" },
+                    onFailure = { "Search failed: ${it.message}" },
+                )
+            )
         }
     }
 }

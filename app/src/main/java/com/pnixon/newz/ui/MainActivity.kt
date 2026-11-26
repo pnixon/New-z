@@ -230,7 +230,7 @@ fun SettingsPage(vm: MainViewModel, config: RankingConfig) {
     var section by rememberSaveable { mutableStateOf("Algorithm") }
     Column(Modifier.fillMaxSize()) {
         Row(Modifier.padding(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            listOf("Algorithm", "Models", "Browser").forEach { name ->
+            listOf("Algorithm", "Models", "Browser", "Search").forEach { name ->
                 FilterChip(selected = section == name, onClick = { section = name }, label = { Text(name) })
             }
         }
@@ -238,6 +238,7 @@ fun SettingsPage(vm: MainViewModel, config: RankingConfig) {
             when (section) {
                 "Models" -> ModelsPage(vm = vm)
                 "Browser" -> BrowserSettingsPage(vm = vm)
+                "Search" -> SearchSettingsPage(vm = vm)
                 else -> AlgorithmPage(vm = vm, config = config)
             }
         }
