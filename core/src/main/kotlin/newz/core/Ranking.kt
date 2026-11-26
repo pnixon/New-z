@@ -136,6 +136,8 @@ data class RankingConfig(
     val rules: List<Rule> = emptyList(),
     /** The topics articles are sorted into, for filtering and for rules. */
     val topics: List<Topic> = Topics.DEFAULT,
+    /** Remember which articles you open, to suggest topic changes. Nothing changes without your say. */
+    val learnFromReading: Boolean = true,
 ) {
     companion object {
         val DEFAULT = RankingConfig()

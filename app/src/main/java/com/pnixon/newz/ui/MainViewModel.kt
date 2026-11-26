@@ -36,6 +36,12 @@ import newz.core.Ranker
 import newz.core.ModelSettings
 import newz.core.AnsyblIdentity
 import newz.core.FactCheck
+import newz.core.LlmRequest
+import newz.core.Learner
+import newz.core.OpenEvent
+import newz.core.Suggestion
+import newz.core.TrackRecord
+import newz.core.Urls
 import newz.core.PublishSettings
 import newz.core.RankingConfig
 import newz.core.Scored
@@ -82,6 +88,12 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private val _publishing = MutableStateFlow(false)
     val publishing: StateFlow<Boolean> = _publishing
 
+    val onDeviceStatus: StateFlow<String> = container.onDevice.status
+    val onDeviceAvailable: StateFlow<Boolean> = container.onDevice.available
+    val onDeviceDownloadable: StateFlow<Boolean> = container.onDevice.downloadable
+
+    val opens: StateFlow<List<OpenEvent>> = container.reading.flow
+
     /** Story checks loaded or run in this session, by article id. */
     private val _checks = MutableStateFlow<Map<Long, FactCheck>>(emptyMap())
     val checks: StateFlow<Map<Long, FactCheck>> = _checks
@@ -125,6 +137,13 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             }
             FrontState(Ranker.rank(items, config, now), articles.associateBy { it.id }, loaded = true)
         }.flowOn(Dispatchers.Default).stateIn(viewModelScope, SharingStarted.Eagerly, FrontState())
+
+    /** Topic changes suggested from what you opened. Empty when learning is off. */
+    val suggestions: StateFlow<List<Suggestion>> =
+        combine(container.reading.flow, container.dismissed.flow, container.config.flow, front) { opened, dismissed, config, state ->
+            if (!config.learnFromReading) emptyList()
+            else Learner.suggest(opened, state.articles.values.map { it.title }, config.topics, dismissed.toSet(), System.currentTimeMillis())
+        }.flowOn(Dispatchers.Default).stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
     private val _refreshing = MutableStateFlow(false)
     val refreshing: StateFlow<Boolean> = _refreshing
@@ -427,5 +446,54 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             if (runCatching { container.publisher.importIdentity(privateKey) }.isSuccess) "Identity imported"
             else "That is not an Ed25519 private key in ed25519:BASE64 form"
         )
+    }
+
+    /** Remembers that an article was opened, if learning is on. Only its headline, topics and source are kept. */
+    fun recordOpen(articleId: Long) {
+        if (!config.value.learnFromReading) return
+        val state = front.value
+        val scored = state.result.visible.firstOrNull { it.item.id == articleId }
+            ?: state.result.hidden.firstOrNull { it.item.id == articleId }
+            ?: return
+        val event = OpenEvent(System.currentTimeMillis(), scored.item.title, scored.topics.map { it.topic }, scored.item.sourceName)
+        container.reading.update { (it + event).takeLast(1000) }
+    }
+
+    fun acceptSuggestion(suggestion: Suggestion) {
+        container.config.update { it.copy(topics = Learner.apply(suggestion, it.topics)) }
+        container.dismissed.update { (it + suggestion.key).distinct() }
+        say("Done. You can change it under Topics.")
+    }
+
+    fun dismissSuggestion(suggestion: Suggestion) {
+        container.dismissed.update { (it + suggestion.key).distinct().takeLast(500) }
+    }
+
+    fun forgetReading() {
+        container.reading.set(emptyList())
+        container.dismissed.set(emptyList())
+        say("Reading history cleared")
+    }
+
+    /** How the site's articles fared in the story checks run so far; null if none were checked. */
+    suspend fun trackRecord(homeUrl: String): TrackRecord? {
+        val site = Urls.host(homeUrl)?.let { Urls.site(it) } ?: return null
+        return runCatching { repository.trackRecords()[site] }.getOrNull()
+    }
+
+    fun checkOnDevice() {
+        viewModelScope.launch { container.onDevice.refresh() }
+    }
+
+    fun downloadOnDevice() {
+        viewModelScope.launch { container.onDevice.download() }
+    }
+
+    /** Sends the built-in model a one-line prompt and returns what it said or why it failed. */
+    suspend fun testOnDevice(): String = kotlinx.coroutines.withContext(Dispatchers.IO) {
+        container.onDevice.refresh()
+        runCatching {
+            container.onDevice.llm.complete(LlmRequest("", "You are a connection test.", "Reply with the single word: ok", 0.0, 20)).text.trim().take(120)
+        }.fold(onSuccess = { "It works. The on-device model replied: $it" }, onFailure = { it.message ?: "The test failed" })
     }
 }

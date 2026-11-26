@@ -106,6 +106,9 @@ fun ModelsPage(vm: MainViewModel) {
     var repairHours by remember(saved) { mutableStateOf(saved.repairIntervalHours.toString()) }
     var maxClaims by remember(saved) { mutableStateOf(saved.maxClaims.toString()) }
 
+    val onDeviceStatus by vm.onDeviceStatus.collectAsStateWithLifecycle()
+    val onDeviceDownloadable by vm.onDeviceDownloadable.collectAsStateWithLifecycle()
+    var onDeviceTest by rememberSaveable { mutableStateOf<String?>(null) }
     var keyInput by rememberSaveable { mutableStateOf("") }
     var testResult by rememberSaveable { mutableStateOf<String?>(null) }
     var busy by remember { mutableStateOf(false) }
@@ -133,7 +136,7 @@ fun ModelsPage(vm: MainViewModel) {
             style = MaterialTheme.typography.bodyMedium,
         )
         Text(
-            if (saved.enabled) "Remote models are on, using ${saved.model}." else "Remote models are off until you choose a model.",
+            if (saved.enabled) "Remote models are on, using ${saved.model}." else "Remote models are off until you choose a model below.",
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.primary,
             modifier = Modifier.padding(top = 8.dp),
@@ -145,6 +148,42 @@ fun ModelsPage(vm: MainViewModel) {
                 OutlinedButton(onClick = { draft = saved.copy() ; temperature = saved.temperature.toString(); maxTokens = saved.maxTokens.toString(); attempts = saved.maxAttempts.toString(); htmlBudget = saved.htmlBudgetChars.toString(); repairHours = saved.repairIntervalHours.toString(); maxClaims = saved.maxClaims.toString() }) { Text("Discard") }
             }
         }
+
+        Heading(
+            "On this phone",
+            "Some phones have a built-in language model apps can use. Nothing leaves the phone and it costs nothing, but it reads only a few thousand words at a time and is weaker than a remote model. " +
+                "When switched on it is tried first, for story checks and for writing recipes from a smaller copy of the page, and the remote model below is used if it fails.",
+        )
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text("Use the on-device model first", style = MaterialTheme.typography.bodyLarge)
+                Text(onDeviceStatus, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            Switch(
+                checked = saved.onDevice,
+                enabled = !dirty,
+                onCheckedChange = { on ->
+                    vm.saveModels(saved.copy(onDevice = on))
+                    if (on) vm.checkOnDevice()
+                },
+            )
+        }
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            OutlinedButton(onClick = { vm.checkOnDevice() }) { Text("Check this phone") }
+            if (onDeviceDownloadable) OutlinedButton(onClick = { vm.downloadOnDevice() }) { Text("Download the model") }
+            OutlinedButton(
+                enabled = !busy,
+                onClick = {
+                    busy = true
+                    onDeviceTest = "Testing…"
+                    scope.launch {
+                        onDeviceTest = vm.testOnDevice()
+                        busy = false
+                    }
+                },
+            ) { Text("Test") }
+        }
+        onDeviceTest?.let { Text(it, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(top = 4.dp)) }
 
         Heading("Provider")
         TextSetting("Address", draft.baseUrl, { draft = draft.copy(baseUrl = it) }, hint = "Any OpenAI-compatible endpoint", keyboard = KeyboardType.Uri)
