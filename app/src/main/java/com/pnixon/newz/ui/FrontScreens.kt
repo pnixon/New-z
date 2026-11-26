@@ -61,7 +61,10 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
 import com.pnixon.newz.data.ArticleEntity
+import newz.core.ClaimStatus
+import newz.core.FactCheck
 import newz.core.Ranker
+import newz.core.Stance
 import newz.core.Scored
 import newz.core.TrustLevel
 
@@ -360,6 +363,14 @@ fun WhySheet(
     onTrust: (TrustLevel) -> Unit,
     onRead: (Boolean) -> Unit,
     onOpen: () -> Unit,
+    check: FactCheck?,
+    checking: Boolean,
+    /** Why a story check cannot run; null when it can. */
+    checkBlocker: String?,
+    onCheck: () -> Unit,
+    shared: Boolean,
+    onShare: () -> Unit,
+    onOpenUrl: (String) -> Unit,
 ) {
     val item = scored.item
     ModalBottomSheet(onDismissRequest = onDismiss) {
@@ -449,6 +460,96 @@ fun WhySheet(
                 OutlinedButton(onClick = { onRead(!item.read) }) {
                     Text(if (item.read) "Mark unread" else "Mark read")
                 }
+            }
+            Spacer(Modifier.height(8.dp))
+            OutlinedButton(onClick = onShare) { Text(if (shared) "Remove from my published feed" else "Share to my published feed") }
+
+            HorizontalDivider(Modifier.padding(vertical = 12.dp))
+            Text("Other coverage", style = MaterialTheme.typography.titleMedium)
+            Text(
+                "Picks this article's main claims, searches the web for each, and shows which other sites report the same thing. " +
+                    "It shows how widely something is reported, not whether it is true.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            if (check != null) StoryCheck(check, onOpenUrl)
+            Spacer(Modifier.height(8.dp))
+            if (checkBlocker != null) {
+                Text(checkBlocker, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            } else {
+                OutlinedButton(enabled = !checking, onClick = onCheck) {
+                    Text(
+                        when {
+                            checking -> "Checking…"
+                            check != null -> "Check again"
+                            else -> "Check this story"
+                        }
+                    )
+                }
+                Text(
+                    "Uses two model requests and one web search per claim, on your keys. Each is recorded in the log under Settings, Models.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun StoryCheck(check: FactCheck, onOpenUrl: (String) -> Unit) {
+    Spacer(Modifier.height(8.dp))
+    Text(
+        "Checked ${ago(check.checkedAt)}" + (if (check.model.isNotBlank()) " with ${check.model}" else "") + ", ${check.searches} searches",
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+    check.error?.let {
+        Text(it, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.error)
+    }
+    check.claims.forEach { claim ->
+        Column(Modifier.padding(vertical = 8.dp)) {
+            Text(claim.claim, style = MaterialTheme.typography.bodyLarge)
+            val headline = when (claim.status) {
+                ClaimStatus.CORROBORATED ->
+                    "Also reported by ${claim.supportingSites} other " + (if (claim.supportingSites == 1) "site" else "sites") +
+                        (if (claim.trustedSupportingSites > 0) ", ${claim.trustedSupportingSites} of them trusted by you" else ", none you have marked trusted")
+                ClaimStatus.DISPUTED -> "Contradicted by other coverage"
+                ClaimStatus.UNCONFIRMED -> "Not found in other coverage"
+            }
+            Text(
+                headline,
+                style = MaterialTheme.typography.bodyMedium,
+                fontWeight = FontWeight.SemiBold,
+                color = when (claim.status) {
+                    ClaimStatus.CORROBORATED -> MaterialTheme.colorScheme.primary
+                    ClaimStatus.DISPUTED -> MaterialTheme.colorScheme.error
+                    ClaimStatus.UNCONFIRMED -> MaterialTheme.colorScheme.onSurfaceVariant
+                },
+            )
+            if (claim.sameOrigin) {
+                Text(
+                    "These reports appear to repeat one original, so they are not independent confirmation.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.error,
+                )
+            }
+            if (claim.note.isNotBlank()) {
+                Text("Model's note: ${claim.note}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            claim.sources.filter { it.stance != Stance.UNRELATED }.forEach { source ->
+                Text(
+                    (if (source.stance == Stance.SUPPORTS) "✓ " else "✗ ") + "${source.site} (${source.trust.name.lowercase()}): ${source.title}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.primary,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.fillMaxWidth().clickable { onOpenUrl(source.url) }.padding(vertical = 4.dp),
+                )
+            }
+            val unrelated = claim.sources.count { it.stance == Stance.UNRELATED }
+            if (unrelated > 0) {
+                Text("$unrelated other results did not address it.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
     }

@@ -16,6 +16,8 @@ data class AppConfig(
     val models: ModelSettings = ModelSettings(),
     /** The web search connector used by topic searches. The API key is never part of this file. */
     val search: SearchSettings = SearchSettings(),
+    /** Where your shared-articles feed is published. Secrets and the signing key are never part of this file. */
+    val publish: PublishSettings = PublishSettings(),
     /** The in-app browser, filter lists and your own blocking rules. */
     val browser: BrowserSettings = BrowserSettings(),
     val sources: List<SourceConfig> = emptyList(),

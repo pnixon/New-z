@@ -24,7 +24,11 @@ import newz.core.SearchClient
 import newz.core.SearchOutcome
 import newz.core.SearchSettings
 import newz.core.Topics
+import newz.core.FactCheck
+import newz.core.FactChecker
+import newz.core.Reader
 import newz.core.AppConfig
+import newz.core.PublishSettings
 import newz.core.BrowserSettings
 import newz.core.DEFAULT_USER_AGENT
 import newz.core.DiscoveryException
@@ -487,6 +491,78 @@ class Repository(
         }
     }
 
+    private val checkDir = File(context.filesDir, "factchecks").apply { mkdirs() }
+
+    /** A story check saved earlier for this article, if any. */
+    fun storedCheck(articleId: Long): FactCheck? = runCatching {
+        ConfigJson.json.decodeFromString(FactCheck.serializer(), File(checkDir, "$articleId.json").readText())
+    }.getOrNull()
+
+    /** What a story check needs and does not have; null when it can run. */
+    fun checkBlocker(): String? = when {
+        !models.flow.value.enabled -> "Set up a model in Settings, Models to check stories."
+        !search.flow.value.enabled || !secrets.has(SecretStore.SEARCH_API_KEY) -> "Save a search key in Settings, Search to check stories."
+        else -> null
+    }
+
+    /**
+     * Compares an article's main claims with other coverage found by web
+     * search. Costs two model requests and one search per claim, all logged.
+     * The result is saved and returned; failures are returned as a result
+     * with an error, not thrown.
+     */
+    suspend fun checkStory(articleId: Long): FactCheck = withContext(Dispatchers.IO) {
+        val article = dao.articlesByIds(listOf(articleId)).firstOrNull()
+            ?: return@withContext FactCheck("", System.currentTimeMillis(), "", emptyList(), error = "That article is no longer stored")
+        val settings = models.flow.value
+        fun cannot(why: String) = FactCheck(article.url, System.currentTimeMillis(), settings.model, emptyList(), error = why)
+        val llm = client() ?: return@withContext cannot("No model is set up")
+        val searcher = searchClient() ?: return@withContext cannot("No search key is saved")
+
+        // The article's own text if it can be fetched and read, otherwise the headline and summary.
+        val text = runCatching { http.get(article.url, mapOf("User-Agent" to DEFAULT_USER_AGENT)) }.getOrNull()
+            ?.takeIf { it.code in 200..299 }
+            ?.let { runCatching { Reader.text(it.body, article.url) }.getOrNull() }
+            ?: listOfNotNull(article.title, article.summary).joinToString("\n")
+
+        val trustBySite = HashMap<String, TrustLevel>()
+        for (s in dao.sourcesNow()) Urls.host(s.homeUrl)?.let { trustBySite[Urls.site(it)] = s.trustLevel() }
+
+        val result = FactChecker(
+            llm,
+            { query ->
+                val now = System.currentTimeMillis()
+                if (searchesLeftToday(now) <= 0) {
+                    SearchOutcome(emptyList(), "", "Your daily search limit is reached")
+                } else {
+                    countSearch(now)
+                    searcher.search(query, now)
+                }
+            },
+            settings,
+            { site -> trustBySite[site] ?: TrustLevel.UNRATED },
+        ).check(article.title, text, article.url)
+
+        logCalls(result.calls, article.sourceId, article.url, settings)
+        val searchSettings = search.flow.value
+        for ((query, outcome) in result.searches) {
+            logDao.insertCall(
+                ModelCallEntity(
+                    at = System.currentTimeMillis(), task = "search", sourceId = article.sourceId,
+                    target = "Story check: ${article.title}",
+                    endpoint = Urls.host(searchSettings.endpoint) ?: searchSettings.endpoint, model = "web search",
+                    systemPrompt = "${searchSettings.method.uppercase()} ${searchSettings.endpoint}\n${searchSettings.request}",
+                    userPrompt = query, response = outcome.raw.take(20_000),
+                    outcome = outcome.error?.let { "Error: $it" } ?: "${outcome.results.size} results",
+                    accepted = outcome.error == null, durationMs = 0, promptTokens = null, completionTokens = null,
+                )
+            )
+        }
+        logDao.pruneCalls()
+        runCatching { File(checkDir, "$articleId.json").writeText(ConfigJson.json.encodeToString(FactCheck.serializer(), result.check)) }
+        result.check
+    }
+
     private fun searchClient(): SearchClient? {
         val settings = search.flow.value
         if (!settings.enabled) return null
@@ -615,8 +691,8 @@ class Repository(
         }
     }
 
-    suspend fun exportConfig(ranking: RankingConfig, browser: BrowserSettings): String =
-        ConfigJson.encode(AppConfig(ranking = ranking, models = models.flow.value, search = search.flow.value, browser = browser, sources = dao.sourcesNow().sortedBy { it.name.lowercase() }.map { it.toConfig() }))
+    suspend fun exportConfig(ranking: RankingConfig, browser: BrowserSettings, publish: PublishSettings): String =
+        ConfigJson.encode(AppConfig(ranking = ranking, models = models.flow.value, search = search.flow.value, publish = publish, browser = browser, sources = dao.sourcesNow().sortedBy { it.name.lowercase() }.map { it.toConfig() }))
 
     /**
      * Applies the sources in an imported file: one whose recipe address

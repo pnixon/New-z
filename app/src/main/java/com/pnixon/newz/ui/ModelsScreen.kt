@@ -104,6 +104,7 @@ fun ModelsPage(vm: MainViewModel) {
     var attempts by remember(saved) { mutableStateOf(saved.maxAttempts.toString()) }
     var htmlBudget by remember(saved) { mutableStateOf(saved.htmlBudgetChars.toString()) }
     var repairHours by remember(saved) { mutableStateOf(saved.repairIntervalHours.toString()) }
+    var maxClaims by remember(saved) { mutableStateOf(saved.maxClaims.toString()) }
 
     var keyInput by rememberSaveable { mutableStateOf("") }
     var testResult by rememberSaveable { mutableStateOf<String?>(null) }
@@ -121,12 +122,13 @@ fun ModelsPage(vm: MainViewModel) {
         maxAttempts = (attempts.toIntOrNull() ?: draft.maxAttempts).coerceIn(1, 6),
         htmlBudgetChars = (htmlBudget.toIntOrNull() ?: draft.htmlBudgetChars).coerceIn(2_000, 400_000),
         repairIntervalHours = (repairHours.toIntOrNull() ?: draft.repairIntervalHours).coerceIn(1, 24 * 30),
+        maxClaims = (maxClaims.toIntOrNull() ?: draft.maxClaims).coerceIn(1, 8),
     )
     val dirty = edited != saved
 
     Column(Modifier.fillMaxSize().imePadding().verticalScroll(rememberScrollState()).padding(16.dp)) {
         Text(
-            "Remote models are used only to write a scraping recipe when the built-in layout detection fails, and to repair a scraped source that has stopped working. " +
+            "Remote models are used to write a scraping recipe when the built-in layout detection fails, to repair a scraped source that has stopped working, and to run a story check when you ask for one. " +
                 "Every request goes directly from this phone to the provider below, on your key. Nothing else is in between.",
             style = MaterialTheme.typography.bodyMedium,
         )
@@ -140,7 +142,7 @@ fun ModelsPage(vm: MainViewModel) {
         if (dirty) {
             Row(Modifier.padding(top = 8.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 Button(enabled = extraValid, onClick = { vm.saveModels(edited); vm.say("Model settings saved") }) { Text("Save changes") }
-                OutlinedButton(onClick = { draft = saved.copy() ; temperature = saved.temperature.toString(); maxTokens = saved.maxTokens.toString(); attempts = saved.maxAttempts.toString(); htmlBudget = saved.htmlBudgetChars.toString(); repairHours = saved.repairIntervalHours.toString() }) { Text("Discard") }
+                OutlinedButton(onClick = { draft = saved.copy() ; temperature = saved.temperature.toString(); maxTokens = saved.maxTokens.toString(); attempts = saved.maxAttempts.toString(); htmlBudget = saved.htmlBudgetChars.toString(); repairHours = saved.repairIntervalHours.toString(); maxClaims = saved.maxClaims.toString() }) { Text("Discard") }
             }
         }
 
@@ -217,8 +219,14 @@ fun ModelsPage(vm: MainViewModel) {
         TextSetting("System prompt", draft.systemPrompt, { draft = draft.copy(systemPrompt = it) }, lines = 8)
         TextSetting("New site prompt", draft.addPrompt, { draft = draft.copy(addPrompt = it) }, hint = "Placeholders: {url} {html}", lines = 12)
         TextSetting("Repair prompt", draft.repairPrompt, { draft = draft.copy(repairPrompt = it) }, hint = "Placeholders: {url} {html} {old_recipe} {old_titles}", lines = 12)
+        TextSetting("Story check: pick claims", draft.claimsPrompt, { draft = draft.copy(claimsPrompt = it) }, hint = "Placeholders: {max} {title} {text}", lines = 12)
+        TextSetting("Story check: compare coverage", draft.comparePrompt, { draft = draft.copy(comparePrompt = it) }, hint = "Placeholder: {claims}", lines = 12)
+        TextSetting("Claims per story check", maxClaims, { maxClaims = it.filter(Char::isDigit) }, hint = "1 to 8. Each claim costs one web search", keyboard = KeyboardType.Number)
         OutlinedButton(onClick = {
-            draft = draft.copy(systemPrompt = Prompts.SYSTEM, addPrompt = Prompts.ADD, repairPrompt = Prompts.REPAIR)
+            draft = draft.copy(
+                systemPrompt = Prompts.SYSTEM, addPrompt = Prompts.ADD, repairPrompt = Prompts.REPAIR,
+                claimsPrompt = Prompts.CLAIMS, comparePrompt = Prompts.COMPARE,
+            )
         }) { Text("Reset prompts to default") }
 
         Heading("Automatic repair")

@@ -24,6 +24,11 @@ fun interface HttpPoster {
     fun postJson(url: String, headers: Map<String, String>, body: String): HttpResponse
 }
 
+/** Blocking PUT of a body. Throws IOException on network failure. */
+fun interface HttpPutter {
+    fun put(url: String, headers: Map<String, String>, body: ByteArray, contentType: String): HttpResponse
+}
+
 const val DEFAULT_USER_AGENT =
     "Mozilla/5.0 (Linux; Android 15; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) NewZ/0.1"
 
@@ -36,7 +41,7 @@ class OkHttpFetcher(
         .readTimeout(30, TimeUnit.SECONDS)
         .callTimeout(60, TimeUnit.SECONDS)
         .build(),
-) : HttpFetcher, HttpPoster {
+) : HttpFetcher, HttpPoster, HttpPutter {
     // Model replies can take far longer than a page fetch.
     private val slowClient: OkHttpClient by lazy {
         client.newBuilder().readTimeout(180, TimeUnit.SECONDS).callTimeout(240, TimeUnit.SECONDS).build()
@@ -53,6 +58,13 @@ class OkHttpFetcher(
         val request = Request.Builder().url(url).apply {
             headers.forEach { (k, v) -> header(k, v) }
         }.post(body.toRequestBody("application/json; charset=utf-8".toMediaType())).build()
+        return execute(slowClient, request)
+    }
+
+    override fun put(url: String, headers: Map<String, String>, body: ByteArray, contentType: String): HttpResponse {
+        val request = Request.Builder().url(url).apply {
+            headers.forEach { (k, v) -> header(k, v) }
+        }.put(body.toRequestBody(contentType.toMediaType())).build()
         return execute(slowClient, request)
     }
 

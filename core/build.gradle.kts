@@ -21,6 +21,7 @@ dependencies {
     api("com.squareup.okhttp3:okhttp:4.12.0")
     api("org.jetbrains.kotlinx:kotlinx-serialization-json:1.9.0")
     implementation("net.dankito.readability4j:readability4j:1.0.8")
+    implementation("org.bouncycastle:bcprov-jdk18on:1.78.1")
 
     testImplementation(kotlin("test-junit"))
 }

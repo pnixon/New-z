@@ -34,7 +34,13 @@ import newz.core.RankItem
 import newz.core.RankResult
 import newz.core.Ranker
 import newz.core.ModelSettings
+import newz.core.AnsyblIdentity
+import newz.core.FactCheck
+import newz.core.PublishSettings
 import newz.core.RankingConfig
+import newz.core.Scored
+import newz.core.SharedItem
+import newz.core.Topics
 import newz.core.SearchOutcome
 import newz.core.SearchSettings
 import newz.core.Recipe
@@ -64,6 +70,24 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     val modelCalls: StateFlow<List<ModelCallSummary>> =
         repository.modelCalls().stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    val publish: StateFlow<PublishSettings> = container.publish.flow
+    val shared: StateFlow<List<SharedItem>> = container.shared.flow
+    val publishStatus: StateFlow<String> = container.publisher.status
+    val publicKey: StateFlow<String?> = container.publisher.publicKey
+
+    private val _hasPublishSecret = MutableStateFlow(container.secrets.has(SecretStore.PUBLISH_SECRET_KEY))
+    val hasPublishSecret: StateFlow<Boolean> = _hasPublishSecret
+
+    private val _publishing = MutableStateFlow(false)
+    val publishing: StateFlow<Boolean> = _publishing
+
+    /** Story checks loaded or run in this session, by article id. */
+    private val _checks = MutableStateFlow<Map<Long, FactCheck>>(emptyMap())
+    val checks: StateFlow<Map<Long, FactCheck>> = _checks
+
+    private val _checking = MutableStateFlow<Set<Long>>(emptySet())
+    val checking: StateFlow<Set<Long>> = _checking
 
     val search: StateFlow<SearchSettings> = container.search.flow
 
@@ -180,7 +204,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    suspend fun exportConfig(): String = repository.exportConfig(config.value, browser.value)
+    suspend fun exportConfig(): String = repository.exportConfig(config.value, browser.value, publish.value)
 
     fun importConfig(text: String) {
         viewModelScope.launch {
@@ -189,6 +213,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 container.config.set(imported.ranking)
                 container.models.set(imported.models)
                 container.search.set(imported.search)
+                container.publish.set(imported.publish)
                 container.browser.set(imported.browser)
                 container.filters.reload()
                 val (updated, added) = repository.importSources(imported.sources)
@@ -295,5 +320,112 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 )
             )
         }
+    }
+
+    /** Loads a saved story check for the article into [checks], if there is one. */
+    fun loadCheck(articleId: Long) {
+        if (articleId in _checks.value) return
+        viewModelScope.launch {
+            val stored = kotlinx.coroutines.withContext(Dispatchers.IO) { repository.storedCheck(articleId) }
+            if (stored != null) _checks.value = _checks.value + (articleId to stored)
+        }
+    }
+
+    fun checkBlocker(): String? = repository.checkBlocker()
+
+    /** Runs a story check. It costs model requests and searches, so it only runs when asked. */
+    fun checkStory(articleId: Long) {
+        if (articleId in _checking.value) return
+        _checking.value = _checking.value + articleId
+        viewModelScope.launch {
+            val result = runCatching { repository.checkStory(articleId) }.getOrElse {
+                FactCheck("", System.currentTimeMillis(), "", emptyList(), error = it.message ?: "The check failed")
+            }
+            _checks.value = _checks.value + (articleId to result)
+            _checking.value = _checking.value - articleId
+        }
+    }
+
+    fun isShared(url: String): Boolean = shared.value.any { it.url == url }
+
+    /** Adds the article to your published feed, or removes it, then republishes if set to. */
+    fun toggleShare(scored: Scored, article: ArticleEntity?) {
+        val item = scored.item
+        val current = container.shared.flow.value
+        val next = if (current.any { it.url == item.url }) {
+            current.filter { it.url != item.url }
+        } else {
+            current + SharedItem(
+                id = java.util.UUID.randomUUID().toString(),
+                url = item.url,
+                title = item.title,
+                summary = article?.summary,
+                sourceName = item.sourceName,
+                imageUrl = article?.imageUrl,
+                tags = (scored.topics.map { it.topic } + item.tags.filter { !it.startsWith(Topics.SEARCH_TAG_PREFIX) }).distinct().take(8),
+                sharedAt = System.currentTimeMillis(),
+            )
+        }
+        container.shared.set(next)
+        afterShareChange(if (next.size > current.size) "Added to your feed" else "Removed from your feed")
+    }
+
+    fun unshare(url: String) {
+        container.shared.set(container.shared.flow.value.filter { it.url != url })
+        afterShareChange("Removed from your feed")
+    }
+
+    private fun afterShareChange(message: String) {
+        val settings = publish.value
+        if (settings.autoPublish && settings.ready && _hasPublishSecret.value) {
+            publishNow("$message.")
+        } else {
+            say(if (settings.ready) message else "$message. It is not online until publishing is set up in Settings, Publish.")
+        }
+    }
+
+    fun publishNow(prefix: String = "") {
+        if (_publishing.value) return
+        _publishing.value = true
+        viewModelScope.launch {
+            val ok = runCatching { container.publisher.publish() }.getOrDefault(false)
+            _publishing.value = false
+            say(listOf(prefix, if (ok) "Feed published" else container.publisher.status.value).filter { it.isNotBlank() }.joinToString(" "))
+        }
+    }
+
+    fun savePublish(settings: PublishSettings) = container.publish.set(settings)
+
+    fun setPublishSecret(value: String?) {
+        val ok = runCatching { container.secrets.set(SecretStore.PUBLISH_SECRET_KEY, value) }.isSuccess
+        _hasPublishSecret.value = container.secrets.has(SecretStore.PUBLISH_SECRET_KEY)
+        say(
+            when {
+                !ok -> "The secret could not be stored on this phone"
+                value.isNullOrBlank() -> "Secret removed"
+                else -> "Secret saved on this phone"
+            }
+        )
+    }
+
+    /** Makes sure a signing identity exists, creating one on first use. */
+    fun ensureIdentity() {
+        if (publicKey.value == null) runCatching { container.publisher.identity() }
+    }
+
+    fun identityFingerprint(): String? = runCatching { container.publisher.identity().fingerprint }.getOrNull()
+
+    fun privateKeyForBackup(): String? = runCatching { container.publisher.identity().privateKeyString }.getOrNull()
+
+    fun newIdentity() {
+        runCatching { container.publisher.newIdentity() }
+        say("New identity created. Subscribers will see a different author key.")
+    }
+
+    fun importIdentity(privateKey: String) {
+        say(
+            if (runCatching { container.publisher.importIdentity(privateKey) }.isSuccess) "Identity imported"
+            else "That is not an Ed25519 private key in ed25519:BASE64 form"
+        )
     }
 }
