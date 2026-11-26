@@ -77,6 +77,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                     // A source cannot publish after the app saw the article.
                     timestamp = minOf(a.publishedAt ?: a.fetchedAt, a.fetchedAt),
                     read = a.read,
+                    summary = a.summary,
+                    tags = a.tags?.split("\n")?.filter { it.isNotBlank() } ?: emptyList(),
                 )
             }
             FrontState(Ranker.rank(items, config, now), articles.associateBy { it.id }, loaded = true)

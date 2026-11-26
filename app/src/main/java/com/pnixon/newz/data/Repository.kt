@@ -327,6 +327,7 @@ class Repository(
         imageUrl = imageUrl,
         publishedAt = publishedAt,
         fetchedAt = now,
+        tags = tags.joinToString("\n").ifEmpty { null },
     )
 
     /** Runs a recipe once without saving anything. */

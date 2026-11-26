@@ -10,6 +10,8 @@ import androidx.room.PrimaryKey
 import androidx.room.Query
 import androidx.room.RoomDatabase
 import androidx.room.Update
+import androidx.room.migration.Migration
+import androidx.sqlite.db.SupportSQLiteDatabase
 import kotlinx.coroutines.flow.Flow
 
 @Entity(tableName = "sources")
@@ -50,6 +52,8 @@ data class ArticleEntity(
     val fetchedAt: Long,
     val read: Boolean = false,
     val bookmarked: Boolean = false,
+    /** The source's own categories, one per line. Null when it gave none. */
+    val tags: String? = null,
 )
 
 @Entity(tableName = "fetch_log", indices = [Index("sourceId")])
@@ -135,9 +139,16 @@ interface NewsDao {
     suspend fun pruneLog(before: Long)
 }
 
+/** Version 2 added the article tags column. */
+val MIGRATION_1_2 = object : Migration(1, 2) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL("ALTER TABLE articles ADD COLUMN tags TEXT")
+    }
+}
+
 @Database(
     entities = [SourceEntity::class, ArticleEntity::class, FetchLogEntity::class],
-    version = 1,
+    version = 2,
     exportSchema = false,
 )
 abstract class NewsDatabase : RoomDatabase() {

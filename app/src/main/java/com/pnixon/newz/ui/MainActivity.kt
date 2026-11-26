@@ -88,6 +88,8 @@ fun NewzRoot(vm: MainViewModel = viewModel()) {
     var tab by rememberSaveable { mutableStateOf(Tab.FRONT) }
     var editingSource by rememberSaveable { mutableStateOf<Long?>(null) }
     var whyArticle by rememberSaveable { mutableStateOf<Long?>(null) }
+    // The front page's topic and tag filter: selected keys, one per line.
+    var frontFilter by rememberSaveable { mutableStateOf("") }
 
     val front by vm.front.collectAsStateWithLifecycle()
     val sources by vm.sources.collectAsStateWithLifecycle()
@@ -161,6 +163,8 @@ fun NewzRoot(vm: MainViewModel = viewModel()) {
                     state = front,
                     refreshing = refreshing,
                     onRefresh = { vm.refresh() },
+                    filter = frontFilter,
+                    onFilter = { frontFilter = it },
                     onOpen = { scored ->
                         vm.setRead(scored.item.id, true)
                     },

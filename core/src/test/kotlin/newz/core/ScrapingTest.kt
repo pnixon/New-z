@@ -21,6 +21,9 @@ private val RSS = """
     <description><![CDATA[<p>The vote was <b>61-39</b>.</p>]]></description>
     <pubDate>Thu, 26 Nov 2026 10:00:00 GMT</pubDate>
     <media:thumbnail url="https://img.example.com/budget.jpg"/>
+    <category>Politics</category>
+    <category><![CDATA[US news, Budget]]></category>
+    <category>politics</category>
   </item>
   <item>
     <title>Storm closes coastal roads</title>
@@ -46,6 +49,7 @@ private val ATOM = """
     <link rel="self" href="https://atom.example.com/self/1"/>
     <link rel="alternate" href="https://atom.example.com/posts/rover"/>
     <summary>Ice was found.</summary>
+    <category term="Space"/>
     <published>2026-11-25T12:00:00Z</published>
   </entry>
 </feed>
@@ -96,7 +100,10 @@ class ScrapingTest {
         assertEquals("https://img.example.com/budget.jpg", first.imageUrl)
         assertEquals(Dates.parse("2026-11-26T10:00:00Z"), first.publishedAt)
 
+        assertEquals(listOf("Politics", "US news", "Budget"), first.tags)
+
         val second = feed.items[1]
+        assertEquals(emptyList(), second.tags)
         assertEquals("https://news.example.com/2026/11/26/storm", second.url)
         assertEquals("https://img.example.com/storm.jpg", second.imageUrl)
         assertEquals(Dates.parse("2026-11-26T13:30:00Z"), second.publishedAt)
@@ -108,6 +115,7 @@ class ScrapingTest {
         assertEquals(1, feed.items.size)
         assertEquals("https://atom.example.com/posts/rover", feed.items[0].url)
         assertEquals("Ice was found.", feed.items[0].summary)
+        assertEquals(listOf("Space"), feed.items[0].tags)
         assertNotNull(feed.items[0].publishedAt)
     }
 
