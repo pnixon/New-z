@@ -53,6 +53,9 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.launch
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import newz.core.Learner
+import newz.core.SuggestionKind
 import newz.core.Ranker
 import newz.core.RankingConfig
 import newz.core.Rule
@@ -129,6 +132,8 @@ private fun describe(rule: Rule): String {
 fun AlgorithmPage(vm: MainViewModel, config: RankingConfig) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+    val suggestions by vm.suggestions.collectAsStateWithLifecycle()
+    val opens by vm.opens.collectAsStateWithLifecycle()
     var addingRule by remember { mutableStateOf(false) }
     var editingTopic by remember { mutableStateOf<Int?>(null) }
     var pendingExport by remember { mutableStateOf("") }
@@ -176,6 +181,32 @@ fun AlgorithmPage(vm: MainViewModel, config: RankingConfig) {
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
+
+        if (suggestions.isNotEmpty()) {
+            Section("Suggestions")
+            Text(
+                "Worked out by counting what you opened in the last ${Learner.WINDOW_DAYS} days. Nothing changes unless you accept.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            suggestions.forEach { suggestion ->
+                Column(Modifier.padding(vertical = 6.dp)) {
+                    Text(
+                        when (suggestion.kind) {
+                            SuggestionKind.FOLLOW_TOPIC -> "Follow ${suggestion.topic}?"
+                            SuggestionKind.UNFOLLOW_TOPIC -> "Stop following ${suggestion.topic}?"
+                            SuggestionKind.ADD_TOPIC -> "Add a topic for \"${suggestion.topic}\"?"
+                        },
+                        style = MaterialTheme.typography.bodyLarge,
+                    )
+                    Text(suggestion.reason, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        TextButton(onClick = { vm.acceptSuggestion(suggestion) }) { Text("Accept") }
+                        TextButton(onClick = { vm.dismissSuggestion(suggestion) }) { Text("Dismiss") }
+                    }
+                }
+            }
+        }
 
         Section("Presets")
         FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -312,6 +343,16 @@ fun AlgorithmPage(vm: MainViewModel, config: RankingConfig) {
             OutlinedButton(onClick = { editingTopic = NEW_TOPIC }) { Text("Add topic") }
             OutlinedButton(onClick = { vm.updateConfig { it.copy(topics = Topics.DEFAULT) } }) { Text("Reset topics") }
         }
+
+        Section("Learning from what you open")
+        SwitchSetting(
+            "Suggest topic changes",
+            "Remembers the headline, topics and source of each article you open, on this phone only, and counts them to suggest topics to follow, unfollow or add. " +
+                "It never changes anything itself, and at least ${Learner.MIN_OPENS} opens are needed before it suggests anything.",
+            config.learnFromReading,
+        ) { on -> vm.updateConfig { it.copy(learnFromReading = on) } }
+        Text("${opens.size} opened articles remembered.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        OutlinedButton(enabled = opens.isNotEmpty(), onClick = { vm.forgetReading() }) { Text("Forget my reading history") }
 
         Section("Configuration file")
         Text(

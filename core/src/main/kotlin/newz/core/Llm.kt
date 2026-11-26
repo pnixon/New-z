@@ -41,6 +41,10 @@ data class ModelSettings(
     val autoRepair: Boolean = true,
     /** Wait at least this long between repair attempts on one source. */
     val repairIntervalHours: Int = 24,
+    /** Try the phone's built-in model before the remote one, where the phone has one. */
+    val onDevice: Boolean = false,
+    /** The built-in model takes far less text, so it is sent a smaller copy of a page. */
+    val onDeviceHtmlBudgetChars: Int = 9_000,
     /** How many claims a story check pulls out of an article. Each one costs a web search. */
     val maxClaims: Int = 3,
     val claimsPrompt: String = Prompts.CLAIMS,

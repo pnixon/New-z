@@ -42,6 +42,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -63,6 +64,7 @@ import newz.core.FetchKind
 import newz.core.RawItem
 import newz.core.Recipe
 import newz.core.SourceConfig
+import newz.core.TrackRecord
 import newz.core.TrustLevel
 
 @Composable
@@ -157,6 +159,8 @@ private fun Preview(items: List<RawItem>) {
 fun SourceEditScreen(vm: MainViewModel, sourceId: Long?, snackbar: SnackbarHostState, onClose: () -> Unit) {
     val scope = rememberCoroutineScope()
     val modelSettings by vm.models.collectAsStateWithLifecycle()
+    val onDeviceAvailable by vm.onDeviceAvailable.collectAsStateWithLifecycle()
+    val modelReady = modelSettings.enabled || (modelSettings.onDevice && onDeviceAvailable)
     var loaded by rememberSaveable { mutableStateOf(sourceId == null) }
     var entity by remember { mutableStateOf<SourceEntity?>(null) }
 
@@ -437,7 +441,7 @@ fun SourceEditScreen(vm: MainViewModel, sourceId: Long?, snackbar: SnackbarHostS
             if (kind == FetchKind.SELECTORS) {
                 Spacer(Modifier.height(4.dp))
                 OutlinedButton(
-                    enabled = !busy && modelSettings.enabled && url.isNotBlank(),
+                    enabled = !busy && modelReady && url.isNotBlank(),
                     onClick = {
                         busy = true
                         error = null
@@ -463,8 +467,12 @@ fun SourceEditScreen(vm: MainViewModel, sourceId: Long?, snackbar: SnackbarHostS
                     },
                 ) { Text("Ask the model to write the selectors") }
                 Text(
-                    if (modelSettings.enabled) "Sends a simplified copy of the page to ${modelSettings.model} using your key. The request appears in the model log."
-                    else "Set up a model on the Models tab to use this.",
+                    when {
+                        modelSettings.onDevice && onDeviceAvailable -> "Tries the phone's own model first" +
+                            (if (modelSettings.enabled) ", then ${modelSettings.model} on your key if that fails." else ".") + " Each request appears in the log."
+                        modelSettings.enabled -> "Sends a simplified copy of the page to ${modelSettings.model} using your key. The request appears in the log."
+                        else -> "Set up a model in Settings, Models to use this."
+                    },
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -494,6 +502,20 @@ fun SourceEditScreen(vm: MainViewModel, sourceId: Long?, snackbar: SnackbarHostS
                             color = if (entry.ok) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.error,
                         )
                     }
+                }
+            }
+            if (sourceId != null && homeUrl.isNotBlank()) {
+                val record by produceState<TrackRecord?>(initialValue = null, sourceId) { value = vm.trackRecord(homeUrl) }
+                record?.let { r ->
+                    HorizontalDivider(Modifier.padding(vertical = 12.dp))
+                    Text("Story checks", style = MaterialTheme.typography.titleSmall)
+                    Text(
+                        "You have checked ${r.articlesChecked} of this site's articles, ${r.claims} claims in all: " +
+                            "${r.corroborated} also reported elsewhere, ${r.disputed} contradicted, ${r.unconfirmed} not found in other coverage. " +
+                            "This is evidence for you to weigh; the app does not change the trust level.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
                 }
             }
             if (sourceId != null) {

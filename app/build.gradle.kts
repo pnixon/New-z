@@ -82,5 +82,7 @@ dependencies {
 
     implementation("androidx.work:work-runtime-ktx:2.10.1")
     implementation("io.coil-kt:coil-compose:2.7.0")
+    // The phone's built-in model (Gemini Nano through AICore), where the device has one.
+    implementation("com.google.mlkit:genai-prompt:1.0.0-beta2")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2")
 }

@@ -27,6 +27,8 @@ import newz.core.Topics
 import newz.core.FactCheck
 import newz.core.FactChecker
 import newz.core.Reader
+import newz.core.LlmClient
+import newz.core.TrackRecord
 import newz.core.AppConfig
 import newz.core.PublishSettings
 import newz.core.BrowserSettings
@@ -112,6 +114,7 @@ class Repository(
     private val search: JsonStore<SearchSettings>,
     /** Loads a page in a hidden browser and returns its HTML after scripts have run. */
     private val render: suspend (url: String, userAgent: String?) -> String,
+    private val local: OnDeviceModel,
 ) {
     private val refreshLock = Mutex()
     private val prefs = context.getSharedPreferences("newz", Context.MODE_PRIVATE)
@@ -217,7 +220,7 @@ class Repository(
                 )
             }
         }
-        if (!models.flow.value.enabled) {
+        if (!modelReady()) {
             return@withContext found ?: throw DiscoveryException("$plainError No model is set up to try instead.")
         }
 
@@ -239,6 +242,12 @@ class Repository(
         )
     }
 
+    /** The phone's built-in model, when the user has switched it on and the phone has it ready. */
+    private fun localLlm(): LlmClient? = if (models.flow.value.onDevice && local.available.value) local.llm else null
+
+    /** True when some model, on the phone or remote, can be asked. */
+    fun modelReady(): Boolean = models.flow.value.enabled || localLlm() != null
+
     private fun client(): OpenAiCompatClient? {
         val settings = models.flow.value
         if (!settings.enabled) return null
@@ -256,8 +265,11 @@ class Repository(
         rendered: Boolean = false,
     ): WriteResult = withContext(Dispatchers.IO) {
         val settings = models.flow.value
-        val llm = client()
-            ?: return@withContext WriteResult(null, emptyList(), emptyList(), "No model is set up. Choose one on the Models tab.")
+        val onPhone = localLlm()
+        val remote = client()
+        if (onPhone == null && remote == null) {
+            return@withContext WriteResult(null, emptyList(), emptyList(), "No model is set up. Choose one in Settings, Models.")
+        }
         val html = if (rendered) {
             try {
                 render(pageUrl, null)
@@ -275,9 +287,23 @@ class Repository(
             }
             page.body
         }
-        val written = RecipeWriter(llm, settings).write(pageUrl, html, repair)
+        // The phone's model goes first when it is on: it is free, but takes a much smaller copy of the page.
+        var written: WriteResult? = null
+        if (onPhone != null) {
+            val small = settings.copy(
+                model = OnDeviceModel.NAME, fallbackModel = "",
+                htmlBudgetChars = settings.onDeviceHtmlBudgetChars.coerceIn(2_000, 14_000),
+                maxAttempts = minOf(2, settings.maxAttempts),
+            )
+            written = RecipeWriter(onPhone, small).write(pageUrl, html, repair)
+        }
+        if (written?.recipe == null && remote != null) {
+            val second = RecipeWriter(remote, settings).write(pageUrl, html, repair)
+            written = second.copy(calls = written?.calls.orEmpty() + second.calls)
+        }
+        val done = written ?: WriteResult(null, emptyList(), emptyList(), "No model is set up")
         // A recipe written from the rendered page only works on the rendered page.
-        val result = if (rendered && written.recipe != null) written.copy(recipe = written.recipe?.copy(render = true)) else written
+        val result = if (rendered && done.recipe != null) done.copy(recipe = done.recipe?.copy(render = true)) else done
         logCalls(result.calls, sourceId, pageUrl, settings)
         result
     }
@@ -429,7 +455,7 @@ class Repository(
         // Broken scraped sources get one model repair attempt per interval.
         var repaired = 0
         val settings = models.flow.value
-        if (settings.autoRepair && settings.enabled) {
+        if (settings.autoRepair && modelReady()) {
             val checked = due.map { it.id }.toSet()
             val interval = settings.repairIntervalHours.coerceAtLeast(1) * 3_600_000L
             for (source in dao.sourcesNow()) {
@@ -498,9 +524,17 @@ class Repository(
         ConfigJson.json.decodeFromString(FactCheck.serializer(), File(checkDir, "$articleId.json").readText())
     }.getOrNull()
 
+    /** How each site's articles fared in the story checks run so far, by site. */
+    suspend fun trackRecords(): Map<String, TrackRecord> = withContext(Dispatchers.IO) {
+        val checks = checkDir.listFiles().orEmpty().mapNotNull { file ->
+            runCatching { ConfigJson.json.decodeFromString(FactCheck.serializer(), file.readText()) }.getOrNull()
+        }
+        TrackRecord.bySite(checks)
+    }
+
     /** What a story check needs and does not have; null when it can run. */
     fun checkBlocker(): String? = when {
-        !models.flow.value.enabled -> "Set up a model in Settings, Models to check stories."
+        !modelReady() -> "Set up a model in Settings, Models to check stories."
         !search.flow.value.enabled || !secrets.has(SecretStore.SEARCH_API_KEY) -> "Save a search key in Settings, Search to check stories."
         else -> null
     }
@@ -516,7 +550,9 @@ class Repository(
             ?: return@withContext FactCheck("", System.currentTimeMillis(), "", emptyList(), error = "That article is no longer stored")
         val settings = models.flow.value
         fun cannot(why: String) = FactCheck(article.url, System.currentTimeMillis(), settings.model, emptyList(), error = why)
-        val llm = client() ?: return@withContext cannot("No model is set up")
+        val onPhone = localLlm()
+        val remote = client()
+        if (onPhone == null && remote == null) return@withContext cannot("No model is set up")
         val searcher = searchClient() ?: return@withContext cannot("No search key is saved")
 
         // The article's own text if it can be fetched and read, otherwise the headline and summary.
@@ -528,9 +564,7 @@ class Repository(
         val trustBySite = HashMap<String, TrustLevel>()
         for (s in dao.sourcesNow()) Urls.host(s.homeUrl)?.let { trustBySite[Urls.site(it)] = s.trustLevel() }
 
-        val result = FactChecker(
-            llm,
-            { query ->
+        val doSearch = { query: String ->
                 val now = System.currentTimeMillis()
                 if (searchesLeftToday(now) <= 0) {
                     SearchOutcome(emptyList(), "", "Your daily search limit is reached")
@@ -538,14 +572,24 @@ class Repository(
                     countSearch(now)
                     searcher.search(query, now)
                 }
-            },
-            settings,
-            { site -> trustBySite[site] ?: TrustLevel.UNRATED },
-        ).check(article.title, text, article.url)
+        }
+        val trustOf = { site: String -> trustBySite[site] ?: TrustLevel.UNRATED }
+        var result: FactChecker.Result? = null
+        var earlierCalls = emptyList<ModelCall>()
+        if (onPhone != null) {
+            result = FactChecker(onPhone, doSearch, settings.copy(model = OnDeviceModel.NAME), trustOf).check(article.title, text, article.url)
+        }
+        // Fall back to the remote model only if the phone's model failed before any search was paid for.
+        if (remote != null && (result == null || (result.check.error != null && result.searches.isEmpty()))) {
+            earlierCalls = result?.calls.orEmpty()
+            result = FactChecker(remote, doSearch, settings, trustOf).check(article.title, text, article.url)
+        }
+        val finished = result ?: return@withContext cannot("No model is set up")
+        logCalls(earlierCalls, article.sourceId, article.url, settings)
 
-        logCalls(result.calls, article.sourceId, article.url, settings)
+        logCalls(finished.calls, article.sourceId, article.url, settings)
         val searchSettings = search.flow.value
-        for ((query, outcome) in result.searches) {
+        for ((query, outcome) in finished.searches) {
             logDao.insertCall(
                 ModelCallEntity(
                     at = System.currentTimeMillis(), task = "search", sourceId = article.sourceId,
@@ -559,8 +603,8 @@ class Repository(
             )
         }
         logDao.pruneCalls()
-        runCatching { File(checkDir, "$articleId.json").writeText(ConfigJson.json.encodeToString(FactCheck.serializer(), result.check)) }
-        result.check
+        runCatching { File(checkDir, "$articleId.json").writeText(ConfigJson.json.encodeToString(FactCheck.serializer(), finished.check)) }
+        finished.check
     }
 
     private fun searchClient(): SearchClient? {

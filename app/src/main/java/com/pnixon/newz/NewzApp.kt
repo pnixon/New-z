@@ -13,6 +13,7 @@ import androidx.work.WorkerParameters
 import com.pnixon.newz.data.FilterListStore
 import com.pnixon.newz.data.JsonStore
 import com.pnixon.newz.data.LogDatabase
+import com.pnixon.newz.data.OnDeviceModel
 import com.pnixon.newz.data.MIGRATION_1_2
 import com.pnixon.newz.data.Publisher
 import com.pnixon.newz.data.SecretStore
@@ -27,6 +28,8 @@ import newz.core.BrowserSettings
 import newz.core.ModelSettings
 import newz.core.OkHttpFetcher
 import kotlinx.serialization.builtins.ListSerializer
+import kotlinx.serialization.builtins.serializer
+import newz.core.OpenEvent
 import newz.core.PublishSettings
 import newz.core.RankingConfig
 import newz.core.SharedItem
@@ -49,10 +52,14 @@ class AppContainer(context: Context) {
     val shared = JsonStore(context, "shared.json", ListSerializer(SharedItem.serializer()), emptyList())
     val publisher = Publisher(context, http, publish, shared, secrets)
     private val renderer = WebRenderer(context, filters, browser)
+    val onDevice = OnDeviceModel()
     val repository = Repository(
         context, db.dao(), logDb.dao(), http, http, models, secrets, config, search,
         render = { url, userAgent -> renderer.render(url, userAgent) },
+        local = onDevice,
     )
+    val reading = JsonStore(context, "reading.json", ListSerializer(OpenEvent.serializer()), emptyList())
+    val dismissed = JsonStore(context, "dismissed.json", ListSerializer(String.serializer()), emptyList())
 }
 
 
@@ -64,7 +71,11 @@ class NewzApp : Application() {
         super.onCreate()
         container = AppContainer(this)
         // Read the downloaded filter lists off the main thread.
-        CoroutineScope(SupervisorJob() + Dispatchers.Default).launch { container.filters.reload() }
+        CoroutineScope(SupervisorJob() + Dispatchers.Default).launch {
+            container.filters.reload()
+            // Only ask the phone about its built-in model if the user has switched it on.
+            if (container.models.flow.value.onDevice) container.onDevice.refresh()
+        }
         RefreshWorker.schedule(this)
     }
 }

@@ -122,8 +122,10 @@ fun NewzRoot(vm: MainViewModel = viewModel()) {
     fun open(articleId: Long, url: String) {
         if (browserSettings.openInApp) {
             browsing = url
+            vm.recordOpen(articleId)
             vm.setRead(articleId, true)
         } else if (openUrl(context, url)) {
+            vm.recordOpen(articleId)
             vm.setRead(articleId, true)
         } else {
             vm.say("No browser could open this")

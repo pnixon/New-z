@@ -44,6 +44,14 @@ over earlier ones.
 - **Publishing**: articles you mark to share are written to a signed Ansybl
   feed and uploaded to your own S3-compatible bucket (Cloudflare R2 works).
   The signing key is made on the phone.
+- **Suggestions**: the app counts what you open and suggests topics to
+  follow, unfollow or add, stating the counts behind each. Nothing changes
+  unless you accept, and the reading history can be switched off or cleared.
+- **Track records**: each source's page shows how its articles fared in the
+  story checks you ran.
+- **On-device model**: where the phone offers a built-in model (Gemini Nano
+  through ML Kit), it can be tried first for story checks and recipes, with
+  the remote model as the fallback.
 - **Browser**: articles open in the app, in the phone's own web engine, with
   ad and tracker requests blocked using standard filter lists (EasyList,
   EasyPrivacy, Peter Lowe's) plus your own rules. Each page lists what was
