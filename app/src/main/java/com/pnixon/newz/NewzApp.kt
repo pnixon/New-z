@@ -1,0 +1,58 @@
+package com.pnixon.newz
+
+import android.app.Application
+import android.content.Context
+import androidx.room.Room
+import androidx.work.Constraints
+import androidx.work.CoroutineWorker
+import androidx.work.ExistingPeriodicWorkPolicy
+import androidx.work.NetworkType
+import androidx.work.PeriodicWorkRequestBuilder
+import androidx.work.WorkManager
+import androidx.work.WorkerParameters
+import com.pnixon.newz.data.ConfigStore
+import com.pnixon.newz.data.NewsDatabase
+import com.pnixon.newz.data.Repository
+import newz.core.OkHttpFetcher
+import java.util.concurrent.TimeUnit
+
+class AppContainer(context: Context) {
+    private val db = Room.databaseBuilder(context, NewsDatabase::class.java, "newz.db").build()
+    val config = ConfigStore(context)
+    val repository = Repository(context, db.dao(), OkHttpFetcher())
+}
+
+class NewzApp : Application() {
+    lateinit var container: AppContainer
+        private set
+
+    override fun onCreate() {
+        super.onCreate()
+        container = AppContainer(this)
+        RefreshWorker.schedule(this)
+    }
+}
+
+/** Checks sources in the background. Each source still honours its own interval. */
+class RefreshWorker(context: Context, params: WorkerParameters) : CoroutineWorker(context, params) {
+    override suspend fun doWork(): Result {
+        val repository = (applicationContext as NewzApp).container.repository
+        return try {
+            repository.seedIfNeeded()
+            repository.refresh(force = false)
+            Result.success()
+        } catch (e: Exception) {
+            Result.retry()
+        }
+    }
+
+    companion object {
+        fun schedule(context: Context) {
+            val request = PeriodicWorkRequestBuilder<RefreshWorker>(30, TimeUnit.MINUTES)
+                .setConstraints(Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build())
+                .build()
+            WorkManager.getInstance(context)
+                .enqueueUniquePeriodicWork("refresh", ExistingPeriodicWorkPolicy.KEEP, request)
+        }
+    }
+}
