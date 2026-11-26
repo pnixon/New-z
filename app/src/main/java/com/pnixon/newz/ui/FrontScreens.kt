@@ -6,6 +6,13 @@ import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import androidx.compose.foundation.clickable
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.AssistChip
+import androidx.compose.material3.AlertDialog
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -39,6 +46,10 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -78,46 +89,157 @@ fun EmptyMessage(text: String) {
     }
 }
 
+private fun topicKey(name: String) = "topic:$name"
+private fun tagKey(tag: String) = "tag:${tag.lowercase()}"
+
+private fun matchesFilter(scored: Scored, selected: Set<String>): Boolean =
+    selected.isEmpty() ||
+        scored.topics.any { topicKey(it.topic) in selected } ||
+        scored.item.tags.any { tagKey(it) in selected }
+
 @Composable
 fun FrontPage(
     state: FrontState,
     refreshing: Boolean,
     onRefresh: () -> Unit,
+    filter: String,
+    onFilter: (String) -> Unit,
     onOpen: (Scored) -> Unit,
     onWhy: (Scored) -> Unit,
 ) {
-    val context = LocalContext.current
-    PullToRefreshBox(isRefreshing = refreshing, onRefresh = onRefresh, modifier = Modifier.fillMaxSize()) {
-        val visible = state.result.visible
-        if (visible.isEmpty()) {
-            // A scrollable holder so pull-to-refresh still works when empty.
-            LazyColumn(Modifier.fillMaxSize()) {
+    val visible = state.result.visible
+    val selected = remember(filter) { filter.split("\n").filter { it.isNotEmpty() }.toSet() }
+    fun toggle(key: String) = onFilter((if (key in selected) selected - key else selected + key).joinToString("\n"))
+
+    // How many front-page articles each topic and each source tag has.
+    val topicCounts = remember(visible) {
+        visible.flatMap { s -> s.topics.map { it.topic }.distinct() }.groupingBy { it }.eachCount()
+            .entries.sortedByDescending { it.value }.map { it.key to it.value }
+    }
+    val tagCounts = remember(visible) {
+        val names = HashMap<String, String>()
+        val counts = HashMap<String, Int>()
+        for (s in visible) for (tag in s.item.tags.distinctBy { it.lowercase() }) {
+            val key = tag.lowercase()
+            names.putIfAbsent(key, tag)
+            counts[key] = (counts[key] ?: 0) + 1
+        }
+        counts.entries.sortedWith(compareByDescending<Map.Entry<String, Int>> { it.value }.thenBy { it.key })
+            .map { names.getValue(it.key) to it.value }
+    }
+    var pickingTags by remember { mutableStateOf(false) }
+    val shown = remember(visible, selected) { visible.filter { matchesFilter(it, selected) } }
+
+    Column(Modifier.fillMaxSize()) {
+        if (topicCounts.isNotEmpty() || tagCounts.isNotEmpty() || selected.isNotEmpty()) {
+            LazyRow(
+                contentPadding = PaddingValues(horizontal = 12.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
                 item {
-                    Box(Modifier.fillParentMaxSize()) {
-                        EmptyMessage(
-                            if (!state.loaded || refreshing) "Fetching your sources…"
-                            else "Nothing to show yet. Pull down to refresh, or check the Sources and Filtered tabs."
-                        )
-                    }
+                    FilterChip(selected = selected.isEmpty(), onClick = { onFilter("") }, label = { Text("All ${visible.size}") })
+                }
+                items(topicCounts, key = { "t:" + it.first }) { (name, count) ->
+                    FilterChip(
+                        selected = topicKey(name) in selected,
+                        onClick = { toggle(topicKey(name)) },
+                        label = { Text("$name $count") },
+                    )
+                }
+                // Selected keys that currently match nothing stay visible so they can be turned off.
+                val listed = topicCounts.map { topicKey(it.first) }.toSet()
+                items(selected.filter { it !in listed }.sorted(), key = { "s:$it" }) { key ->
+                    FilterChip(
+                        selected = true,
+                        onClick = { toggle(key) },
+                        label = { Text(if (key.startsWith("tag:")) "#" + key.removePrefix("tag:") else key.removePrefix("topic:")) },
+                    )
+                }
+                if (tagCounts.isNotEmpty()) {
+                    item { AssistChip(onClick = { pickingTags = true }, label = { Text("Source tags…") }) }
                 }
             }
-        } else {
-            LazyColumn(Modifier.fillMaxSize()) {
-                items(visible, key = { it.item.id }) { scored ->
-                    ArticleRow(
-                        scored = scored,
-                        article = state.articles[scored.item.id],
-                        subtitle = null,
-                        onClick = {
-                            if (openUrl(context, scored.item.url)) onOpen(scored)
-                        },
-                        onWhy = { onWhy(scored) },
-                    )
-                    HorizontalDivider()
+        }
+        PullToRefreshBox(isRefreshing = refreshing, onRefresh = onRefresh, modifier = Modifier.weight(1f).fillMaxWidth()) {
+            if (shown.isEmpty()) {
+                // A scrollable holder so pull-to-refresh still works when empty.
+                LazyColumn(Modifier.fillMaxSize()) {
+                    item {
+                        Box(Modifier.fillParentMaxSize()) {
+                            EmptyMessage(
+                                when {
+                                    !state.loaded || (refreshing && visible.isEmpty()) -> "Fetching your sources…"
+                                    visible.isNotEmpty() -> "No article on the front page matches this filter. Tap All to clear it."
+                                    else -> "Nothing to show yet. Pull down to refresh, or check the Sources and Filtered tabs."
+                                }
+                            )
+                        }
+                    }
+                }
+            } else {
+                LazyColumn(Modifier.fillMaxSize()) {
+                    items(shown, key = { it.item.id }) { scored ->
+                        ArticleRow(
+                            scored = scored,
+                            article = state.articles[scored.item.id],
+                            subtitle = null,
+                            onClick = { onOpen(scored) },
+                            onWhy = { onWhy(scored) },
+                        )
+                        HorizontalDivider()
+                    }
                 }
             }
         }
     }
+
+    if (pickingTags) {
+        TagPicker(
+            tags = tagCounts,
+            selected = selected,
+            onToggle = { toggle(tagKey(it)) },
+            onDismiss = { pickingTags = false },
+        )
+    }
+}
+
+/** The categories the sources themselves attached, most common first. */
+@Composable
+private fun TagPicker(tags: List<Pair<String, Int>>, selected: Set<String>, onToggle: (String) -> Unit, onDismiss: () -> Unit) {
+    var search by remember { mutableStateOf("") }
+    val shown = remember(tags, search) { tags.filter { it.first.contains(search.trim(), ignoreCase = true) } }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Source tags") },
+        text = {
+            Column {
+                Text(
+                    "Categories your sources put on their own articles. Pick any number; the front page shows articles with at least one.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                OutlinedTextField(search, { search = it }, label = { Text("Search") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                LazyColumn(Modifier.heightIn(max = 360.dp)) {
+                    items(shown, key = { it.first.lowercase() }) { (tag, count) ->
+                        val on = tagKey(tag) in selected
+                        Row(
+                            Modifier.fillMaxWidth().clickable { onToggle(tag) }.padding(vertical = 10.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Text(
+                                (if (on) "✓ " else "") + tag,
+                                style = MaterialTheme.typography.bodyMedium,
+                                fontWeight = if (on) FontWeight.SemiBold else FontWeight.Normal,
+                                modifier = Modifier.weight(1f),
+                            )
+                            Text(count.toString(), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = { TextButton(onClick = onDismiss) { Text("Done") } },
+    )
 }
 
 @Composable
@@ -237,8 +359,8 @@ fun WhySheet(
     onDismiss: () -> Unit,
     onTrust: (TrustLevel) -> Unit,
     onRead: (Boolean) -> Unit,
+    onOpen: () -> Unit,
 ) {
-    val context = LocalContext.current
     val item = scored.item
     ModalBottomSheet(onDismissRequest = onDismiss) {
         Column(
@@ -259,6 +381,22 @@ fun WhySheet(
             if (!article?.summary.isNullOrBlank()) {
                 Spacer(Modifier.height(8.dp))
                 Text(article?.summary.orEmpty(), style = MaterialTheme.typography.bodyMedium)
+            }
+
+            if (scored.topics.isNotEmpty()) {
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    "Topics: " + scored.topics.joinToString(", ") { "${it.topic} (matched \"${it.keyword}\")" },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            if (item.tags.isNotEmpty()) {
+                Text(
+                    "${item.sourceName}'s own tags: " + item.tags.joinToString(", "),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
             }
 
             Spacer(Modifier.height(16.dp))
@@ -305,8 +443,8 @@ fun WhySheet(
             Spacer(Modifier.height(16.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 Button(onClick = {
-                    if (openUrl(context, item.url)) onRead(true)
                     onDismiss()
+                    onOpen()
                 }) { Text("Open article") }
                 OutlinedButton(onClick = { onRead(!item.read) }) {
                     Text(if (item.read) "Mark unread" else "Mark read")

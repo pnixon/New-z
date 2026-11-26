@@ -4,7 +4,13 @@ import kotlinx.serialization.Serializable
 import kotlin.math.pow
 
 @Serializable
-enum class RuleField { TITLE, SOURCE, URL, ANY }
+enum class RuleField {
+    TITLE, SOURCE, URL,
+    /** The article's topics and the source's own tags. */
+    TAG,
+    /** Title, source name or address. */
+    ANY,
+}
 
 @Serializable
 enum class RuleAction { ADD_POINTS, HIDE }
@@ -22,6 +28,55 @@ data class Rule(
     val points: Double = 1.0,
     val enabled: Boolean = true,
 )
+
+/**
+ * A topic is a name and a list of keywords. An article belongs to it when any
+ * keyword appears as a whole word or phrase (ignoring case) in the title, the
+ * summary, or the source's own tags.
+ */
+@Serializable
+data class Topic(val name: String, val keywords: List<String>)
+
+/** A topic an article was put in, and the keyword that put it there. */
+data class TopicMatch(val topic: String, val keyword: String)
+
+object Topics {
+    val DEFAULT = listOf(
+        Topic("World", listOf("world", "international", "foreign", "united nations", "diplomat", "embassy", "europe", "asia", "africa", "middle east", "latin america")),
+        Topic("Politics", listOf("politics", "election", "congress", "senate", "parliament", "president", "prime minister", "white house", "lawmakers", "supreme court", "campaign", "ballot", "legislation")),
+        Topic("Business", listOf("business", "economy", "economic", "markets", "stocks", "inflation", "interest rates", "earnings", "trade", "tariff", "jobs report", "bank", "merger")),
+        Topic("Technology", listOf("technology", "tech", "software", "artificial intelligence", "ai", "chip", "cybersecurity", "hack", "smartphone", "startup", "social media", "data breach")),
+        Topic("Science", listOf("science", "scientists", "research", "study", "space", "nasa", "physics", "astronomy", "fossil", "telescope", "biology")),
+        Topic("Health", listOf("health", "medical", "medicine", "hospital", "disease", "vaccine", "virus", "cancer", "mental health", "drug", "outbreak")),
+        Topic("Climate", listOf("climate", "environment", "emissions", "global warming", "wildfire", "drought", "flood", "hurricane", "renewable", "carbon", "pollution")),
+        Topic("Sports", listOf("sport", "sports", "football", "soccer", "basketball", "baseball", "tennis", "olympics", "championship", "league", "world cup", "playoff")),
+        Topic("Culture", listOf("culture", "arts", "music", "film", "movie", "television", "book", "books", "theatre", "theater", "museum", "celebrity", "album")),
+    )
+
+    /** Finds each topic's first matching keyword in an article's text. */
+    class Matcher(topics: List<Topic>) {
+        private val compiled = topics
+            .filter { it.name.isNotBlank() }
+            .map { topic ->
+                val words = topic.keywords.map { it.trim() }.filter { it.isNotEmpty() }
+                topic.name.trim() to if (words.isEmpty()) null else Regex(
+                    "(?<![\\p{L}\\p{Nd}])(?:" + words.joinToString("|") { Regex.escape(it) } + ")(?![\\p{L}\\p{Nd}])",
+                    RegexOption.IGNORE_CASE,
+                )
+            }
+
+        fun match(item: RankItem): List<TopicMatch> {
+            val text = buildString {
+                append(item.title)
+                item.summary?.let { append(" \n ").append(it) }
+                item.tags.forEach { append(" \n ").append(it) }
+            }
+            return compiled.mapNotNull { (name, regex) ->
+                regex?.find(text)?.let { TopicMatch(name, it.value.lowercase()) }
+            }
+        }
+    }
+}
 
 /**
  * Every number the front page order depends on.
@@ -55,6 +110,8 @@ data class RankingConfig(
     /** Share of headline words two articles must have in common to count as one story (0 to 1). */
     val duplicateSimilarity: Double = 0.6,
     val rules: List<Rule> = emptyList(),
+    /** The topics articles are sorted into, for filtering and for rules. */
+    val topics: List<Topic> = Topics.DEFAULT,
 ) {
     companion object {
         val DEFAULT = RankingConfig()
@@ -80,6 +137,9 @@ data class RankItem(
     /** Publish time, or when the app first saw it if the source gives none. */
     val timestamp: Long,
     val read: Boolean,
+    val summary: String? = null,
+    /** The source's own categories for the article. */
+    val tags: List<String> = emptyList(),
 )
 
 /** One line of the score: [points] = [raw] x [weight]. */
@@ -99,6 +159,8 @@ data class Scored(
     val hiddenReason: String? = null,
     /** Other sources carrying the same story. */
     val alsoReportedBy: List<String> = emptyList(),
+    /** The topics the article was put in, each with the keyword that matched. */
+    val topics: List<TopicMatch> = emptyList(),
 )
 
 data class RankResult(val visible: List<Scored>, val hidden: List<Scored>)
@@ -113,15 +175,20 @@ object Ranker {
         val activeRules = config.rules.filter { it.enabled && it.contains.isNotBlank() }
         val maxAgeMillis = config.maxAgeDays * 24 * HOUR
 
+        val matcher = Topics.Matcher(config.topics)
+        val topicsOf = HashMap<Long, List<TopicMatch>>(items.size * 2)
+        for (item in items) topicsOf[item.id] = matcher.match(item)
+
         for (item in items) {
-            val hideRule = activeRules.firstOrNull { it.action == RuleAction.HIDE && matches(it, item) }
+            val itemTopics = topicsOf[item.id].orEmpty()
+            val hideRule = activeRules.firstOrNull { it.action == RuleAction.HIDE && matches(it, item, itemTopics) }
             val reason = when {
                 item.trust == TrustLevel.BLOCKED -> "${item.sourceName} is blocked"
                 hideRule != null -> "Hidden by your rule \"${hideRule.name}\""
                 now - item.timestamp > maxAgeMillis -> "Older than ${config.maxAgeDays} days"
                 else -> null
             }
-            if (reason != null) hidden.add(Scored(item, 0.0, emptyList(), reason)) else candidates.add(item)
+            if (reason != null) hidden.add(Scored(item, 0.0, emptyList(), reason, topics = itemTopics)) else candidates.add(item)
         }
 
         val clusters = StoryClusterer.cluster(candidates, config.duplicateSimilarity)
@@ -129,7 +196,7 @@ object Ranker {
         for (cluster in clusters) {
             val scoredCluster = cluster.map { item ->
                 val others = cluster.filter { it.sourceId != item.sourceId }.map { it.sourceName }.distinct().sorted()
-                score(item, others, config, activeRules, now)
+                score(item, others, topicsOf[item.id].orEmpty(), config, activeRules, now)
             }
             if (config.collapseDuplicates && scoredCluster.size > 1) {
                 val ordered = scoredCluster.sortedWith(order)
@@ -166,6 +233,7 @@ object Ranker {
     private fun score(
         item: RankItem,
         otherSources: List<String>,
+        topics: List<TopicMatch>,
         config: RankingConfig,
         rules: List<Rule>,
         now: Long,
@@ -212,26 +280,28 @@ object Ranker {
         )
 
         for (rule in rules) {
-            if (rule.action == RuleAction.ADD_POINTS && matches(rule, item)) {
+            if (rule.action == RuleAction.ADD_POINTS && matches(rule, item, topics)) {
                 parts.add(
                     Contribution(
                         "Rule: ${rule.name}",
-                        "${rule.field.name.lowercase()} contains \"${rule.contains}\"",
+                        (if (rule.field == RuleField.TAG) "topics or tags contain" else "${rule.field.name.lowercase()} contains") +
+                            " \"${rule.contains}\"",
                         1.0, rule.points, rule.points,
                     )
                 )
             }
         }
-        return Scored(item, parts.sumOf { it.points }, parts, alsoReportedBy = otherSources)
+        return Scored(item, parts.sumOf { it.points }, parts, alsoReportedBy = otherSources, topics = topics)
     }
 
-    private fun matches(rule: Rule, item: RankItem): Boolean {
+    private fun matches(rule: Rule, item: RankItem, topics: List<TopicMatch>): Boolean {
         val needle = rule.contains.trim()
         fun has(text: String) = text.contains(needle, ignoreCase = true)
         return when (rule.field) {
             RuleField.TITLE -> has(item.title)
             RuleField.SOURCE -> has(item.sourceName)
             RuleField.URL -> has(item.url)
+            RuleField.TAG -> topics.any { has(it.topic) } || item.tags.any { has(it) }
             RuleField.ANY -> has(item.title) || has(item.sourceName) || has(item.url)
         }
     }

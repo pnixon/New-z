@@ -17,6 +17,7 @@ import kotlinx.serialization.KSerializer
 import kotlinx.serialization.builtins.MapSerializer
 import kotlinx.serialization.builtins.serializer
 import newz.core.AppConfig
+import newz.core.BrowserSettings
 import newz.core.DEFAULT_USER_AGENT
 import newz.core.DiscoveryException
 import newz.core.HttpPoster
@@ -327,6 +328,7 @@ class Repository(
         imageUrl = imageUrl,
         publishedAt = publishedAt,
         fetchedAt = now,
+        tags = tags.joinToString("\n").ifEmpty { null },
     )
 
     /** Runs a recipe once without saving anything. */
@@ -411,8 +413,8 @@ class Repository(
         }
     }
 
-    suspend fun exportConfig(ranking: RankingConfig): String =
-        ConfigJson.encode(AppConfig(ranking = ranking, models = models.flow.value, sources = dao.sourcesNow().sortedBy { it.name.lowercase() }.map { it.toConfig() }))
+    suspend fun exportConfig(ranking: RankingConfig, browser: BrowserSettings): String =
+        ConfigJson.encode(AppConfig(ranking = ranking, models = models.flow.value, browser = browser, sources = dao.sourcesNow().sortedBy { it.name.lowercase() }.map { it.toConfig() }))
 
     /**
      * Applies the sources in an imported file: one whose recipe address

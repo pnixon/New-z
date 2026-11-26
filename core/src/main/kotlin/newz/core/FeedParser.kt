@@ -34,6 +34,7 @@ object FeedParser {
                 summary = bodyHtml?.let { plain(it) }?.take(500)?.ifEmpty { null },
                 imageUrl = imageOf(entry, baseUrl),
                 publishedAt = Dates.parse(date, now),
+                tags = tagsOf(entry),
             )
         }
         return ParsedFeed(feedTitle, items)
@@ -59,6 +60,16 @@ object FeedParser {
             ?: return null
         return Urls.resolve(baseUrl, raw)
     }
+
+    /** The feed's own categories: RSS <category>, Atom <category term="...">, <dc:subject>. */
+    private fun tagsOf(entry: Element): List<String> =
+        entry.children()
+            .filter { it.named("category") || it.named("dc:subject") }
+            .flatMap { el -> el.attr("term").ifBlank { plain(el.text()) }.split(Regex("\\s*[,;/|]\\s*")) }
+            .map { it.trim() }
+            .filter { it.length in 2..40 }
+            .distinctBy { it.lowercase() }
+            .take(12)
 
     private fun imageOf(entry: Element, baseUrl: String): String? {
         val media = entry.getAllElements().firstOrNull {

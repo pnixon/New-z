@@ -50,4 +50,6 @@ data class RawItem(
     val summary: String? = null,
     val imageUrl: String? = null,
     val publishedAt: Long? = null,
+    /** Categories the source itself attached to the article. */
+    val tags: List<String> = emptyList(),
 )

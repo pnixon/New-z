@@ -17,6 +17,8 @@ class RankingTest {
         hoursOld: Double = 1.0,
         trust: TrustLevel = TrustLevel.NEUTRAL,
         read: Boolean = false,
+        summary: String? = null,
+        tags: List<String> = emptyList(),
     ) = RankItem(
         id = nextId++,
         title = title,
@@ -26,6 +28,8 @@ class RankingTest {
         trust = trust,
         timestamp = NOW - (hoursOld * HOUR).toLong(),
         read = read,
+        summary = summary,
+        tags = tags,
     )
 
     private fun close(expected: Double, actual: Double) =
@@ -169,5 +173,66 @@ class RankingTest {
         val partial = ConfigJson.decode("""{"ranking": {"trustWeight": 2.0, "futureField": 1}}""")
         assertEquals(2.0, partial.ranking.trustWeight)
         assertEquals(RankingConfig().recencyWeight, partial.ranking.recencyWeight)
+    }
+
+    @Test
+    fun topicsMatchWholeWordsInTitleSummaryAndTags() {
+        val items = listOf(
+            item("Senate votes on the new budget"),
+            item("A quiet day at the party", summary = "Nothing about art or the smart home"),
+            item("Rover lands safely", tags = listOf("Space", "NASA")),
+            item("Regulators question AI chip exports", summary = "The trade rules change next month"),
+        )
+        val scored = Ranker.rank(items, RankingConfig(), NOW).visible.associateBy { it.item.title }
+
+        assertEquals(listOf(TopicMatch("Politics", "senate")), scored.getValue("Senate votes on the new budget").topics)
+        // "party", "art" and "smart" contain no keyword as a whole word.
+        assertEquals(emptyList(), scored.getValue("A quiet day at the party").topics)
+        assertEquals(listOf("Science"), scored.getValue("Rover lands safely").topics.map { it.topic })
+        assertEquals(
+            listOf("Business" to "trade", "Technology" to "ai"),
+            scored.getValue("Regulators question AI chip exports").topics.map { it.topic to it.keyword },
+        )
+    }
+
+    @Test
+    fun editedTopicsReclassifyImmediately() {
+        val config = RankingConfig(topics = listOf(Topic("Local", listOf("city council", "transit")), Topic("Empty", emptyList())))
+        val scored = Ranker.rank(
+            listOf(item("City Council approves transit plan"), item("Senate votes on the new budget")), config, NOW,
+        ).visible.associateBy { it.item.title }
+        assertEquals(listOf(TopicMatch("Local", "city council")), scored.getValue("City Council approves transit plan").topics)
+        assertEquals(emptyList(), scored.getValue("Senate votes on the new budget").topics)
+    }
+
+    @Test
+    fun rulesCanTargetTopicsAndTags() {
+        val config = RankingConfig(
+            rules = listOf(
+                Rule("No sports", RuleField.TAG, "sports", RuleAction.HIDE),
+                Rule("More space", RuleField.TAG, "nasa", points = 2.0),
+            )
+        )
+        val result = Ranker.rank(
+            listOf(
+                item("Playoff schedule released for the season"),
+                item("Rover lands safely", tags = listOf("NASA")),
+                item("Budget vote scheduled for Friday morning"),
+            ),
+            config, NOW,
+        )
+        assertEquals("Rover lands safely", result.visible.first().item.title)
+        assertEquals("topics or tags contain \"nasa\"", result.visible.first().contributions.single { it.signal == "Rule: More space" }.detail)
+        val hidden = result.hidden.single()
+        assertEquals("Hidden by your rule \"No sports\"", hidden.hiddenReason)
+        assertEquals(listOf("Sports"), hidden.topics.map { it.topic }, "hidden articles still show their topics")
+    }
+
+    @Test
+    fun topicsTravelInTheConfigFile() {
+        val config = AppConfig(ranking = RankingConfig(topics = listOf(Topic("Local", listOf("transit")))))
+        assertEquals(config, ConfigJson.decode(ConfigJson.encode(config)))
+        // A file saved before topics existed gets the defaults.
+        assertEquals(Topics.DEFAULT, ConfigJson.decode("""{"ranking": {"trustWeight": 1.0}}""").ranking.topics)
     }
 }

@@ -22,9 +22,18 @@ over earlier ones.
   source, how many of your sources carry the story, whether you have read it,
   and your own rules). Every article shows its score line by line.
 - **Filtered**: every article held back, with the reason.
+- **Topics and tags**: the front page filters by topic and by the tags the
+  sources put on their own articles. A topic is a name and a keyword list you
+  can edit; each article shows which keyword put it in a topic. Rules can
+  boost, bury or hide by topic or tag.
 - **Trust and blocking**: a level per source, set only by you.
 - **Algorithm**: every weight, threshold and rule is editable, and the whole
   configuration exports to and imports from one JSON file.
+- **Browser**: articles open in the app, in the phone's own web engine, with
+  ad and tracker requests blocked using standard filter lists (EasyList,
+  EasyPrivacy, Peter Lowe's) plus your own rules. Each page lists what was
+  blocked and by which rule, blocking can be switched off per site, and a
+  reader view shows the article alone.
 - **Models**: optional. With your own API key for any OpenAI-compatible
   provider, a model writes the recipe when layout detection fails and repairs
   scraped sources that break. Each answer is run against the real page and

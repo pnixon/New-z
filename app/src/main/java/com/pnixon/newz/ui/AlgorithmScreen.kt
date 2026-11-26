@@ -4,6 +4,10 @@ package com.pnixon.newz.ui
 
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.clickable
+import androidx.compose.ui.text.style.TextOverflow
+import newz.core.Topic
+import newz.core.Topics
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
@@ -106,12 +110,16 @@ private fun SwitchSetting(label: String, explanation: String, checked: Boolean, 
 }
 
 private fun describe(rule: Rule): String {
-    val where = if (rule.field == RuleField.ANY) "title, source or address" else rule.field.name.lowercase()
+    val where = when (rule.field) {
+        RuleField.ANY -> "title, source or address"
+        RuleField.TAG -> "topics or source tags"
+        else -> rule.field.name.lowercase()
+    }
     val effect = when (rule.action) {
         RuleAction.HIDE -> "hide the article"
         RuleAction.ADD_POINTS -> "add ${Ranker.fmt(rule.points)} to its score"
     }
-    return "If the $where contains \"${rule.contains}\", $effect"
+    return "If the $where ${if (rule.field == RuleField.TAG) "contain" else "contains"} \"${rule.contains}\", $effect"
 }
 
 /** Every number and rule behind the front page order, all editable. */
@@ -120,6 +128,7 @@ fun AlgorithmPage(vm: MainViewModel, config: RankingConfig) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var addingRule by remember { mutableStateOf(false) }
+    var editingTopic by remember { mutableStateOf<Int?>(null) }
     var pendingExport by remember { mutableStateOf("") }
 
     val exporter = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/json")) { uri ->
@@ -167,11 +176,11 @@ fun AlgorithmPage(vm: MainViewModel, config: RankingConfig) {
 
         Section("Presets")
         FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            OutlinedButton(onClick = { vm.updateConfig { RankingConfig.DEFAULT.copy(rules = it.rules) } }) { Text("Default") }
-            OutlinedButton(onClick = { vm.updateConfig { RankingConfig.CHRONOLOGICAL.copy(rules = it.rules) } }) { Text("Newest first only") }
+            OutlinedButton(onClick = { vm.updateConfig { RankingConfig.DEFAULT.copy(rules = it.rules, topics = it.topics) } }) { Text("Default") }
+            OutlinedButton(onClick = { vm.updateConfig { RankingConfig.CHRONOLOGICAL.copy(rules = it.rules, topics = it.topics) } }) { Text("Newest first only") }
         }
         Text(
-            "Presets reset the numbers below and keep your rules.",
+            "Presets reset the numbers below and keep your rules and topics.",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
@@ -259,6 +268,35 @@ fun AlgorithmPage(vm: MainViewModel, config: RankingConfig) {
         }
         OutlinedButton(onClick = { addingRule = true }) { Text("Add rule") }
 
+        Section("Topics")
+        Text(
+            "An article is in a topic when one of the topic's keywords appears as a whole word or phrase, in any letter case, in its title, summary or the source's own tags. " +
+                "The front page can be filtered by topic, rules can target topics, and each article's ⓘ shows which keyword matched.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        config.topics.forEachIndexed { index, topic ->
+            Row(Modifier.fillMaxWidth().clickable { editingTopic = index }.padding(vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text(topic.name, style = MaterialTheme.typography.bodyLarge)
+                    Text(
+                        topic.keywords.joinToString(", ").ifEmpty { "No keywords: matches nothing" },
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+                IconButton(onClick = { vm.updateConfig { c -> c.copy(topics = c.topics.filterIndexed { i, _ -> i != index }) } }) {
+                    Icon(Icons.Filled.Delete, contentDescription = "Delete topic")
+                }
+            }
+        }
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            OutlinedButton(onClick = { editingTopic = NEW_TOPIC }) { Text("Add topic") }
+            OutlinedButton(onClick = { vm.updateConfig { it.copy(topics = Topics.DEFAULT) } }) { Text("Reset topics") }
+        }
+
         Section("Configuration file")
         Text(
             "One readable JSON file holds these numbers, your rules, the model settings and prompts, and every source with its recipe and trust level. API keys are never in it. Importing replaces the numbers, rules and model settings, and updates or adds the sources in the file.",
@@ -278,6 +316,19 @@ fun AlgorithmPage(vm: MainViewModel, config: RankingConfig) {
         Spacer(Modifier.height(32.dp))
     }
 
+    editingTopic?.let { index ->
+        TopicDialog(
+            initial = config.topics.getOrNull(index),
+            onDismiss = { editingTopic = null },
+            onSave = { topic ->
+                vm.updateConfig { c ->
+                    c.copy(topics = if (index in c.topics.indices) c.topics.mapIndexed { i, t -> if (i == index) topic else t } else c.topics + topic)
+                }
+                editingTopic = null
+            },
+        )
+    }
+
     if (addingRule) {
         RuleDialog(
             onDismiss = { addingRule = false },
@@ -287,6 +338,40 @@ fun AlgorithmPage(vm: MainViewModel, config: RankingConfig) {
             },
         )
     }
+}
+
+private const val NEW_TOPIC = -1
+
+@Composable
+private fun TopicDialog(initial: Topic?, onDismiss: () -> Unit, onSave: (Topic) -> Unit) {
+    var name by remember { mutableStateOf(initial?.name.orEmpty()) }
+    var keywords by remember { mutableStateOf(initial?.keywords?.joinToString(", ").orEmpty()) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(if (initial == null) "Add topic" else "Edit topic") },
+        text = {
+            Column {
+                OutlinedTextField(name, { name = it }, label = { Text("Name") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                Spacer(Modifier.height(8.dp))
+                OutlinedTextField(
+                    keywords, { keywords = it },
+                    label = { Text("Keywords") },
+                    supportingText = { Text("Separate with commas. Phrases are allowed.") },
+                    minLines = 3,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(
+                enabled = name.isNotBlank(),
+                onClick = {
+                    onSave(Topic(name.trim(), keywords.split(",", "\n").map { it.trim() }.filter { it.isNotEmpty() }.distinctBy { it.lowercase() }))
+                },
+            ) { Text("Save") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
+    )
 }
 
 @Composable
@@ -309,7 +394,7 @@ private fun RuleDialog(onDismiss: () -> Unit, onAdd: (Rule) -> Unit) {
                 Text("Look in", style = MaterialTheme.typography.labelLarge)
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     RuleField.entries.forEach { f ->
-                        FilterChip(selected = field == f, onClick = { field = f }, label = { Text(f.name.lowercase().replaceFirstChar { it.uppercase() }) })
+                        FilterChip(selected = field == f, onClick = { field = f }, label = { Text(if (f == RuleField.TAG) "Topic or tag" else f.name.lowercase().replaceFirstChar { it.uppercase() }) })
                     }
                 }
                 OutlinedTextField(contains, { contains = it }, label = { Text("Contains (any case)") }, singleLine = true, modifier = Modifier.fillMaxWidth())

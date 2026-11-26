@@ -20,6 +20,7 @@ dependencies {
     api("org.jsoup:jsoup:1.18.3")
     api("com.squareup.okhttp3:okhttp:4.12.0")
     api("org.jetbrains.kotlinx:kotlinx-serialization-json:1.9.0")
+    implementation("net.dankito.readability4j:readability4j:1.0.8")
 
     testImplementation(kotlin("test-junit"))
 }

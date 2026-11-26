@@ -6,6 +6,7 @@ import androidx.lifecycle.viewModelScope
 import com.pnixon.newz.NewzApp
 import com.pnixon.newz.data.ArticleEntity
 import com.pnixon.newz.data.FetchLogEntity
+import com.pnixon.newz.data.FilterListState
 import com.pnixon.newz.data.ModelCallEntity
 import com.pnixon.newz.data.ModelCallSummary
 import com.pnixon.newz.data.RecipeHistoryEntity
@@ -24,7 +25,10 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import newz.core.AdBlocker
+import newz.core.BrowserSettings
 import newz.core.ConfigJson
+import newz.core.FilterList
 import newz.core.Discovery
 import newz.core.RankItem
 import newz.core.RankResult
@@ -59,6 +63,13 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     val modelCalls: StateFlow<List<ModelCallSummary>> =
         repository.modelCalls().stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
+    val browser: StateFlow<BrowserSettings> = container.browser.flow
+    val blocker: StateFlow<AdBlocker> = container.filters.blocker
+    val filterRevision: StateFlow<Int> = container.filters.revision
+
+    private val _updatingFilters = MutableStateFlow(false)
+    val updatingFilters: StateFlow<Boolean> = _updatingFilters
+
     /** The time scores are calculated for. Moved forward on refresh and once a minute. */
     private val clock = MutableStateFlow(System.currentTimeMillis())
 
@@ -77,6 +88,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                     // A source cannot publish after the app saw the article.
                     timestamp = minOf(a.publishedAt ?: a.fetchedAt, a.fetchedAt),
                     read = a.read,
+                    summary = a.summary,
+                    tags = a.tags?.split("\n")?.filter { it.isNotBlank() } ?: emptyList(),
                 )
             }
             FrontState(Ranker.rank(items, config, now), articles.associateBy { it.id }, loaded = true)
@@ -93,6 +106,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             repository.seedIfNeeded()
             refresh(force = false, announce = false)
         }
+        // First launch downloads the filter lists; later launches only when they are due.
+        updateFilters(force = false, announce = false)
     }
 
     fun tick() {
@@ -157,7 +172,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    suspend fun exportConfig(): String = repository.exportConfig(config.value)
+    suspend fun exportConfig(): String = repository.exportConfig(config.value, browser.value)
 
     fun importConfig(text: String) {
         viewModelScope.launch {
@@ -165,6 +180,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 val imported = ConfigJson.decode(text)
                 container.config.set(imported.ranking)
                 container.models.set(imported.models)
+                container.browser.set(imported.browser)
+                container.filters.reload()
                 val (updated, added) = repository.importSources(imported.sources)
                 say("Imported settings, $updated sources updated, $added added")
                 refresh(force = false, announce = false)
@@ -214,4 +231,29 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     suspend fun restoreRecipe(sourceId: Long, historyId: Long): Boolean =
         runCatching { repository.restoreRecipe(sourceId, historyId) }.getOrDefault(false)
+
+    /** Saves browser settings and rebuilds the blocker from them. */
+    fun saveBrowser(settings: BrowserSettings) {
+        container.browser.set(settings)
+        viewModelScope.launch { container.filters.reload() }
+    }
+
+    fun filterState(list: FilterList): FilterListState = container.filters.state(list)
+
+    fun updateFilters(force: Boolean, announce: Boolean = true) {
+        if (_updatingFilters.value) return
+        _updatingFilters.value = true
+        viewModelScope.launch {
+            val result = runCatching { container.filters.update(force) }
+            _updatingFilters.value = false
+            if (announce) {
+                say(
+                    result.fold(
+                        onSuccess = { (fetched, failed) -> "$fetched lists downloaded" + if (failed > 0) ", $failed failed" else "" },
+                        onFailure = { "Could not update the lists: ${it.message}" },
+                    )
+                )
+            }
+        }
+    }
 }
