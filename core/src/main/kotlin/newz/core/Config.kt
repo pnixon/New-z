@@ -14,6 +14,8 @@ data class AppConfig(
     val ranking: RankingConfig = RankingConfig(),
     /** Remote model settings and prompts. The API key is never part of this file. */
     val models: ModelSettings = ModelSettings(),
+    /** The in-app browser, filter lists and your own blocking rules. */
+    val browser: BrowserSettings = BrowserSettings(),
     val sources: List<SourceConfig> = emptyList(),
 )
 

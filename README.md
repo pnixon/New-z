@@ -29,6 +29,11 @@ over earlier ones.
 - **Trust and blocking**: a level per source, set only by you.
 - **Algorithm**: every weight, threshold and rule is editable, and the whole
   configuration exports to and imports from one JSON file.
+- **Browser**: articles open in the app, in the phone's own web engine, with
+  ad and tracker requests blocked using standard filter lists (EasyList,
+  EasyPrivacy, Peter Lowe's) plus your own rules. Each page lists what was
+  blocked and by which rule, blocking can be switched off per site, and a
+  reader view shows the article alone.
 - **Models**: optional. With your own API key for any OpenAI-compatible
   provider, a model writes the recipe when layout detection fails and repairs
   scraped sources that break. Each answer is run against the real page and

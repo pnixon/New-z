@@ -10,11 +10,17 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Box
+import newz.core.RankingConfig
+import androidx.compose.ui.unit.dp
+import androidx.compose.material3.FilterChip
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.Build
 import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.List
@@ -76,8 +82,7 @@ enum class Tab(val label: String, val title: String, val icon: ImageVector) {
     FRONT("Front", "New-z", Icons.Filled.Home),
     FILTERED("Filtered", "Filtered out", Icons.Filled.Clear),
     SOURCES("Sources", "Sources", Icons.Filled.List),
-    ALGORITHM("Algorithm", "Algorithm", Icons.Filled.Settings),
-    MODELS("Models", "Models", Icons.Filled.Build),
+    SETTINGS("Settings", "Settings", Icons.Filled.Settings),
 }
 
 /** Marks "add a new source" in the editor's saved state. */
@@ -105,6 +110,28 @@ fun NewzRoot(vm: MainViewModel = viewModel()) {
             delay(60_000)
             vm.tick()
         }
+    }
+
+    val browserSettings by vm.browser.collectAsStateWithLifecycle()
+    val context = LocalContext.current
+    var browsing by rememberSaveable { mutableStateOf<String?>(null) }
+
+    /** Opens an article in the app's browser or the phone's, as set, and marks it read. */
+    fun open(articleId: Long, url: String) {
+        if (browserSettings.openInApp) {
+            browsing = url
+            vm.setRead(articleId, true)
+        } else if (openUrl(context, url)) {
+            vm.setRead(articleId, true)
+        } else {
+            vm.say("No browser could open this")
+        }
+    }
+
+    val browsingUrl = browsing
+    if (browsingUrl != null) {
+        BrowserScreen(vm = vm, startUrl = browsingUrl, snackbar = snackbar, onClose = { browsing = null })
+        return
     }
 
     val editing = editingSource
@@ -165,15 +192,12 @@ fun NewzRoot(vm: MainViewModel = viewModel()) {
                     onRefresh = { vm.refresh() },
                     filter = frontFilter,
                     onFilter = { frontFilter = it },
-                    onOpen = { scored ->
-                        vm.setRead(scored.item.id, true)
-                    },
+                    onOpen = { scored -> open(scored.item.id, scored.item.url) },
                     onWhy = { whyArticle = it.item.id },
                 )
                 Tab.FILTERED -> FilteredPage(state = front, onWhy = { whyArticle = it.item.id })
                 Tab.SOURCES -> SourcesPage(sources = sources, onEdit = { editingSource = it })
-                Tab.ALGORITHM -> AlgorithmPage(vm = vm, config = config)
-                Tab.MODELS -> ModelsPage(vm = vm)
+                Tab.SETTINGS -> SettingsPage(vm = vm, config = config)
             }
         }
     }
@@ -191,7 +215,31 @@ fun NewzRoot(vm: MainViewModel = viewModel()) {
                 onDismiss = { whyArticle = null },
                 onTrust = { vm.setTrust(scored.item.sourceId, it) },
                 onRead = { vm.setRead(scored.item.id, it) },
+                onOpen = {
+                    whyArticle = null
+                    open(scored.item.id, scored.item.url)
+                },
             )
+        }
+    }
+}
+
+/** Algorithm, model and browser settings, one section at a time. */
+@Composable
+fun SettingsPage(vm: MainViewModel, config: RankingConfig) {
+    var section by rememberSaveable { mutableStateOf("Algorithm") }
+    Column(Modifier.fillMaxSize()) {
+        Row(Modifier.padding(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            listOf("Algorithm", "Models", "Browser").forEach { name ->
+                FilterChip(selected = section == name, onClick = { section = name }, label = { Text(name) })
+            }
+        }
+        Box(Modifier.weight(1f).fillMaxWidth()) {
+            when (section) {
+                "Models" -> ModelsPage(vm = vm)
+                "Browser" -> BrowserSettingsPage(vm = vm)
+                else -> AlgorithmPage(vm = vm, config = config)
+            }
         }
     }
 }

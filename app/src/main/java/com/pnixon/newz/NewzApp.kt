@@ -10,12 +10,18 @@ import androidx.work.NetworkType
 import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
+import com.pnixon.newz.data.FilterListStore
 import com.pnixon.newz.data.JsonStore
 import com.pnixon.newz.data.LogDatabase
 import com.pnixon.newz.data.MIGRATION_1_2
 import com.pnixon.newz.data.SecretStore
 import com.pnixon.newz.data.NewsDatabase
 import com.pnixon.newz.data.Repository
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
+import newz.core.BrowserSettings
 import newz.core.ModelSettings
 import newz.core.OkHttpFetcher
 import newz.core.RankingConfig
@@ -30,6 +36,8 @@ class AppContainer(context: Context) {
     val config = JsonStore(context, "ranking.json", RankingConfig.serializer(), RankingConfig())
     val models = JsonStore(context, "models.json", ModelSettings.serializer(), ModelSettings())
     val secrets = SecretStore(context)
+    val browser = JsonStore(context, "browser.json", BrowserSettings.serializer(), BrowserSettings())
+    val filters = FilterListStore(context, http, browser)
     val repository = Repository(context, db.dao(), logDb.dao(), http, http, models, secrets)
 }
 
@@ -40,6 +48,8 @@ class NewzApp : Application() {
     override fun onCreate() {
         super.onCreate()
         container = AppContainer(this)
+        // Read the downloaded filter lists off the main thread.
+        CoroutineScope(SupervisorJob() + Dispatchers.Default).launch { container.filters.reload() }
         RefreshWorker.schedule(this)
     }
 }
@@ -51,6 +61,7 @@ class RefreshWorker(context: Context, params: WorkerParameters) : CoroutineWorke
         return try {
             repository.seedIfNeeded()
             repository.refresh(force = false)
+            runCatching { (applicationContext as NewzApp).container.filters.update(force = false) }
             Result.success()
         } catch (e: Exception) {
             Result.retry()

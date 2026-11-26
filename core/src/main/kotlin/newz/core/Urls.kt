@@ -61,6 +61,20 @@ object Urls {
         null
     }
 
+    private val secondLevel = setOf("co", "com", "org", "net", "gov", "ac", "edu")
+
+    /**
+     * The registrable part of [host], approximately: the last two labels, or
+     * three for forms like example.co.uk. Used to tell first party from third.
+     */
+    fun site(host: String): String {
+        val labels = host.lowercase().removePrefix("www.").split('.')
+        if (labels.size <= 2) return labels.joinToString(".")
+        val tld = labels.last()
+        val keep = if (tld.length == 2 && labels[labels.size - 2] in secondLevel) 3 else 2
+        return labels.takeLast(keep).joinToString(".")
+    }
+
     /** True when [url] is on [siteHost] or one of its subdomains (or the reverse). */
     fun sameSite(url: String, siteHost: String): Boolean {
         val h = host(url) ?: return false

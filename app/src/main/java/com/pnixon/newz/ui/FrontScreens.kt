@@ -107,7 +107,6 @@ fun FrontPage(
     onOpen: (Scored) -> Unit,
     onWhy: (Scored) -> Unit,
 ) {
-    val context = LocalContext.current
     val visible = state.result.visible
     val selected = remember(filter) { filter.split("\n").filter { it.isNotEmpty() }.toSet() }
     fun toggle(key: String) = onFilter((if (key in selected) selected - key else selected + key).joinToString("\n"))
@@ -184,9 +183,7 @@ fun FrontPage(
                             scored = scored,
                             article = state.articles[scored.item.id],
                             subtitle = null,
-                            onClick = {
-                                if (openUrl(context, scored.item.url)) onOpen(scored)
-                            },
+                            onClick = { onOpen(scored) },
                             onWhy = { onWhy(scored) },
                         )
                         HorizontalDivider()
@@ -362,8 +359,8 @@ fun WhySheet(
     onDismiss: () -> Unit,
     onTrust: (TrustLevel) -> Unit,
     onRead: (Boolean) -> Unit,
+    onOpen: () -> Unit,
 ) {
-    val context = LocalContext.current
     val item = scored.item
     ModalBottomSheet(onDismissRequest = onDismiss) {
         Column(
@@ -446,8 +443,8 @@ fun WhySheet(
             Spacer(Modifier.height(16.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 Button(onClick = {
-                    if (openUrl(context, item.url)) onRead(true)
                     onDismiss()
+                    onOpen()
                 }) { Text("Open article") }
                 OutlinedButton(onClick = { onRead(!item.read) }) {
                     Text(if (item.read) "Mark unread" else "Mark read")
