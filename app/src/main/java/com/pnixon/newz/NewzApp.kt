@@ -10,16 +10,24 @@ import androidx.work.NetworkType
 import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
-import com.pnixon.newz.data.ConfigStore
+import com.pnixon.newz.data.JsonStore
+import com.pnixon.newz.data.LogDatabase
+import com.pnixon.newz.data.SecretStore
 import com.pnixon.newz.data.NewsDatabase
 import com.pnixon.newz.data.Repository
+import newz.core.ModelSettings
 import newz.core.OkHttpFetcher
+import newz.core.RankingConfig
 import java.util.concurrent.TimeUnit
 
 class AppContainer(context: Context) {
     private val db = Room.databaseBuilder(context, NewsDatabase::class.java, "newz.db").build()
-    val config = ConfigStore(context)
-    val repository = Repository(context, db.dao(), OkHttpFetcher())
+    private val logDb = Room.databaseBuilder(context, LogDatabase::class.java, "newz-log.db").build()
+    private val http = OkHttpFetcher()
+    val config = JsonStore(context, "ranking.json", RankingConfig.serializer(), RankingConfig())
+    val models = JsonStore(context, "models.json", ModelSettings.serializer(), ModelSettings())
+    val secrets = SecretStore(context)
+    val repository = Repository(context, db.dao(), logDb.dao(), http, http, models, secrets)
 }
 
 class NewzApp : Application() {

@@ -261,7 +261,7 @@ fun AlgorithmPage(vm: MainViewModel, config: RankingConfig) {
 
         Section("Configuration file")
         Text(
-            "One readable JSON file holds these numbers, your rules, and every source with its recipe and trust level. Importing replaces the numbers and rules, and updates or adds the sources in the file.",
+            "One readable JSON file holds these numbers, your rules, the model settings and prompts, and every source with its recipe and trust level. API keys are never in it. Importing replaces the numbers, rules and model settings, and updates or adds the sources in the file.",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )

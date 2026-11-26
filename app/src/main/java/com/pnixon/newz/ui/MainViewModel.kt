@@ -6,6 +6,10 @@ import androidx.lifecycle.viewModelScope
 import com.pnixon.newz.NewzApp
 import com.pnixon.newz.data.ArticleEntity
 import com.pnixon.newz.data.FetchLogEntity
+import com.pnixon.newz.data.ModelCallEntity
+import com.pnixon.newz.data.ModelCallSummary
+import com.pnixon.newz.data.RecipeHistoryEntity
+import com.pnixon.newz.data.SecretStore
 import com.pnixon.newz.data.SourceEntity
 import com.pnixon.newz.data.TestResult
 import com.pnixon.newz.data.trustLevel
@@ -25,7 +29,10 @@ import newz.core.Discovery
 import newz.core.RankItem
 import newz.core.RankResult
 import newz.core.Ranker
+import newz.core.ModelSettings
 import newz.core.RankingConfig
+import newz.core.Recipe
+import newz.core.WriteResult
 import newz.core.SourceConfig
 import newz.core.TrustLevel
 
@@ -43,6 +50,14 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     val sources: StateFlow<List<SourceEntity>> =
         repository.sources.stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+
+    val models: StateFlow<ModelSettings> = container.models.flow
+
+    private val _hasApiKey = MutableStateFlow(container.secrets.has(SecretStore.MODEL_API_KEY))
+    val hasApiKey: StateFlow<Boolean> = _hasApiKey
+
+    val modelCalls: StateFlow<List<ModelCallSummary>> =
+        repository.modelCalls().stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
     /** The time scores are calculated for. Moved forward on refresh and once a minute. */
     private val clock = MutableStateFlow(System.currentTimeMillis())
@@ -97,7 +112,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 tick()
                 if (announce) {
                     val failed = if (summary.failures > 0) ", ${summary.failures} failed" else ""
-                    say("${summary.newArticles} new from ${summary.sourcesChecked} sources$failed")
+                    val repaired = if (summary.repaired > 0) ", ${summary.repaired} repaired by the model" else ""
+                    say("${summary.newArticles} new from ${summary.sourcesChecked} sources$failed$repaired")
                 }
             } catch (e: Exception) {
                 say("Refresh failed: ${e.message}")
@@ -148,6 +164,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             try {
                 val imported = ConfigJson.decode(text)
                 container.config.set(imported.ranking)
+                container.models.set(imported.models)
                 val (updated, added) = repository.importSources(imported.sources)
                 say("Imported settings, $updated sources updated, $added added")
                 refresh(force = false, announce = false)
@@ -156,4 +173,45 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             }
         }
     }
+
+    fun saveModels(settings: ModelSettings) = container.models.set(settings)
+
+    /** Stores the key, or removes it when [value] is blank. */
+    fun setApiKey(value: String?) {
+        val ok = runCatching { container.secrets.set(SecretStore.MODEL_API_KEY, value) }.isSuccess
+        _hasApiKey.value = container.secrets.has(SecretStore.MODEL_API_KEY)
+        say(
+            when {
+                !ok -> "The key could not be stored on this phone"
+                value.isNullOrBlank() -> "Key removed"
+                else -> "Key saved on this phone"
+            }
+        )
+    }
+
+    suspend fun listModels(): Result<List<String>> = runCatching { repository.listModels() }
+
+    suspend fun testConnection(): String =
+        runCatching { repository.testConnection() }.getOrElse { it.message ?: "The test failed" }
+
+    suspend fun modelCall(id: Long): ModelCallEntity? = repository.modelCall(id)
+
+    fun clearModelCalls() {
+        viewModelScope.launch { repository.clearModelCalls() }
+    }
+
+    /**
+     * Has the model write a recipe for [pageUrl]. For an existing source the
+     * model is also shown [current] and that source's recent headlines.
+     */
+    suspend fun askModel(pageUrl: String, sourceId: Long?, current: Recipe): WriteResult =
+        runCatching {
+            val repair = sourceId?.let { repository.repairContext(it, current) }
+            repository.askModel(pageUrl, sourceId, repair)
+        }.getOrElse { WriteResult(null, emptyList(), emptyList(), it.message ?: "The request failed") }
+
+    fun historyFor(sourceId: Long): Flow<List<RecipeHistoryEntity>> = repository.historyFor(sourceId)
+
+    suspend fun restoreRecipe(sourceId: Long, historyId: Long): Boolean =
+        runCatching { repository.restoreRecipe(sourceId, historyId) }.getOrDefault(false)
 }

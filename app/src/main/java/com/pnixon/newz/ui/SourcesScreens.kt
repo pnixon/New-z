@@ -55,6 +55,7 @@ import com.pnixon.newz.data.BROKEN_AFTER
 import com.pnixon.newz.data.SourceEntity
 import com.pnixon.newz.data.isBroken
 import com.pnixon.newz.data.recipe
+import newz.core.ConfigJson
 import com.pnixon.newz.data.toConfig
 import com.pnixon.newz.data.trustLevel
 import kotlinx.coroutines.launch
@@ -151,6 +152,7 @@ private fun Preview(items: List<RawItem>) {
 @Composable
 fun SourceEditScreen(vm: MainViewModel, sourceId: Long?, snackbar: SnackbarHostState, onClose: () -> Unit) {
     val scope = rememberCoroutineScope()
+    val modelSettings by vm.models.collectAsStateWithLifecycle()
     var loaded by rememberSaveable { mutableStateOf(sourceId == null) }
     var entity by remember { mutableStateOf<SourceEntity?>(null) }
 
@@ -383,6 +385,44 @@ fun SourceEditScreen(vm: MainViewModel, sourceId: Long?, snackbar: SnackbarHostS
                     },
                 ) { Text("Save") }
             }
+            if (kind == FetchKind.SELECTORS) {
+                Spacer(Modifier.height(4.dp))
+                OutlinedButton(
+                    enabled = !busy && modelSettings.enabled && url.isNotBlank(),
+                    onClick = {
+                        busy = true
+                        error = null
+                        scope.launch {
+                            val result = vm.askModel(url.trim(), sourceId, current().recipe)
+                            val written = result.recipe
+                            if (written != null) {
+                                item = written.item
+                                title = written.title
+                                link = written.link
+                                summary = written.summary
+                                image = written.image
+                                date = written.date
+                                exclude = written.exclude
+                                preview = result.items
+                                method = "${result.calls.last().model} wrote these selectors in ${result.calls.size} request(s). " +
+                                    "They are not saved until you press Save."
+                            } else {
+                                error = result.failure
+                            }
+                            busy = false
+                        }
+                    },
+                ) { Text("Ask the model to write the selectors") }
+                Text(
+                    if (modelSettings.enabled) "Sends a simplified copy of the page to ${modelSettings.model} using your key. The request appears in the model log."
+                    else "Set up a model on the Models tab to use this.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                if (sourceId != null) {
+                    method?.let { Text(it, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.primary) }
+                }
+            }
 
             error?.let {
                 Spacer(Modifier.height(8.dp))
@@ -404,6 +444,49 @@ fun SourceEditScreen(vm: MainViewModel, sourceId: Long?, snackbar: SnackbarHostS
                             style = MaterialTheme.typography.bodySmall,
                             color = if (entry.ok) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.error,
                         )
+                    }
+                }
+            }
+            if (sourceId != null) {
+                val history by remember(sourceId) { vm.historyFor(sourceId) }.collectAsStateWithLifecycle(emptyList())
+                if (history.isNotEmpty()) {
+                    HorizontalDivider(Modifier.padding(vertical = 12.dp))
+                    Text("Earlier recipes", style = MaterialTheme.typography.titleSmall)
+                    history.forEach { entry ->
+                        val old = remember(entry.id) { runCatching { ConfigJson.decodeRecipe(entry.recipeJson) }.getOrNull() }
+                        Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Column(Modifier.weight(1f)) {
+                                Text("${ago(entry.at)}: ${entry.reason}", style = MaterialTheme.typography.bodySmall)
+                                Text(
+                                    when {
+                                        old == null -> "unreadable"
+                                        old.kind == FetchKind.FEED -> "Feed: ${old.url}"
+                                        else -> "Item selector: ${old.item}"
+                                    },
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                            TextButton(
+                                enabled = !busy,
+                                onClick = {
+                                    scope.launch {
+                                        if (vm.restoreRecipe(sourceId, entry.id)) {
+                                            vm.source(sourceId)?.let {
+                                                entity = it
+                                                fill(it.toConfig())
+                                            }
+                                            preview = null
+                                            method = null
+                                            error = null
+                                            vm.say("Recipe restored")
+                                        } else {
+                                            error = "That recipe could not be restored"
+                                        }
+                                    }
+                                },
+                            ) { Text("Restore") }
+                        }
                     }
                 }
             }
