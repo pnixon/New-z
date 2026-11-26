@@ -37,6 +37,13 @@ over earlier ones.
   block or follow.
 - **JavaScript pages**: a listing page that is empty until its scripts run can
   be loaded in a hidden browser before it is read.
+- **Story checks**: on request, a model picks an article's main claims, each
+  is searched for, and the app shows which other sites report the same thing,
+  which contradict it, and whether the reports look like copies of one
+  original. It shows how widely something is reported, not whether it is true.
+- **Publishing**: articles you mark to share are written to a signed Ansybl
+  feed and uploaded to your own S3-compatible bucket (Cloudflare R2 works).
+  The signing key is made on the phone.
 - **Browser**: articles open in the app, in the phone's own web engine, with
   ad and tracker requests blocked using standard filter lists (EasyList,
   EasyPrivacy, Peter Lowe's) plus your own rules. Each page lists what was

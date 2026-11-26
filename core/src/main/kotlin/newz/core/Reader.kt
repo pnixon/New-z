@@ -30,6 +30,10 @@ object Reader {
         )
     }
 
+    /** The article's plain text, or null when the page has no article-sized body. */
+    fun text(html: String, url: String): String? =
+        extract(html, url)?.let { Jsoup.parse(it.contentHtml).text().trim() }?.ifEmpty { null }
+
     fun page(article: ReaderArticle, sourceUrl: String, dark: Boolean): String {
         val background = if (dark) "#121212" else "#fdfcf9"
         val text = if (dark) "#e4e2dd" else "#1c1b1a"

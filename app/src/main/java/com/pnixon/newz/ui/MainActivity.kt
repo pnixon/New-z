@@ -8,7 +8,9 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.Box
 import newz.core.RankingConfig
 import androidx.compose.ui.unit.dp
@@ -202,8 +204,12 @@ fun NewzRoot(vm: MainViewModel = viewModel()) {
         }
     }
 
+    val checks by vm.checks.collectAsStateWithLifecycle()
+    val checking by vm.checking.collectAsStateWithLifecycle()
+    val sharedItems by vm.shared.collectAsStateWithLifecycle()
     val whyId = whyArticle
     if (whyId != null) {
+        LaunchedEffect(whyId) { vm.loadCheck(whyId) }
         val scored = front.result.visible.firstOrNull { it.item.id == whyId }
             ?: front.result.hidden.firstOrNull { it.item.id == whyId }
         if (scored == null) {
@@ -219,6 +225,16 @@ fun NewzRoot(vm: MainViewModel = viewModel()) {
                     whyArticle = null
                     open(scored.item.id, scored.item.url)
                 },
+                check = checks[whyId],
+                checking = whyId in checking,
+                checkBlocker = vm.checkBlocker(),
+                onCheck = { vm.checkStory(whyId) },
+                shared = sharedItems.any { it.url == scored.item.url },
+                onShare = { vm.toggleShare(scored, front.articles[whyId]) },
+                onOpenUrl = { url ->
+                    whyArticle = null
+                    if (browserSettings.openInApp) browsing = url else if (!openUrl(context, url)) vm.say("No browser could open this")
+                },
             )
         }
     }
@@ -229,8 +245,11 @@ fun NewzRoot(vm: MainViewModel = viewModel()) {
 fun SettingsPage(vm: MainViewModel, config: RankingConfig) {
     var section by rememberSaveable { mutableStateOf("Algorithm") }
     Column(Modifier.fillMaxSize()) {
-        Row(Modifier.padding(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            listOf("Algorithm", "Models", "Browser", "Search").forEach { name ->
+        Row(
+            Modifier.horizontalScroll(rememberScrollState()).padding(horizontal = 16.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            listOf("Algorithm", "Models", "Browser", "Search", "Publish").forEach { name ->
                 FilterChip(selected = section == name, onClick = { section = name }, label = { Text(name) })
             }
         }
@@ -239,6 +258,7 @@ fun SettingsPage(vm: MainViewModel, config: RankingConfig) {
                 "Models" -> ModelsPage(vm = vm)
                 "Browser" -> BrowserSettingsPage(vm = vm)
                 "Search" -> SearchSettingsPage(vm = vm)
+                "Publish" -> PublishSettingsPage(vm = vm)
                 else -> AlgorithmPage(vm = vm, config = config)
             }
         }

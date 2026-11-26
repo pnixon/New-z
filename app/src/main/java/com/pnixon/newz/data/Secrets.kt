@@ -61,6 +61,8 @@ class SecretStore(context: Context) {
     companion object {
         const val MODEL_API_KEY = "model_api_key"
         const val SEARCH_API_KEY = "search_api_key"
+        const val PUBLISH_SECRET_KEY = "publish_secret_key"
+        const val ANSYBL_PRIVATE_KEY = "ansybl_private_key"
         private const val ALIAS = "newz-secrets"
         private const val TRANSFORMATION = "AES/GCM/NoPadding"
     }

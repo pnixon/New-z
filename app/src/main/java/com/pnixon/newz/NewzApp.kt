@@ -14,6 +14,7 @@ import com.pnixon.newz.data.FilterListStore
 import com.pnixon.newz.data.JsonStore
 import com.pnixon.newz.data.LogDatabase
 import com.pnixon.newz.data.MIGRATION_1_2
+import com.pnixon.newz.data.Publisher
 import com.pnixon.newz.data.SecretStore
 import com.pnixon.newz.data.WebRenderer
 import com.pnixon.newz.data.NewsDatabase
@@ -25,7 +26,10 @@ import kotlinx.coroutines.launch
 import newz.core.BrowserSettings
 import newz.core.ModelSettings
 import newz.core.OkHttpFetcher
+import kotlinx.serialization.builtins.ListSerializer
+import newz.core.PublishSettings
 import newz.core.RankingConfig
+import newz.core.SharedItem
 import newz.core.SearchSettings
 import java.util.concurrent.TimeUnit
 
@@ -41,6 +45,9 @@ class AppContainer(context: Context) {
     val browser = JsonStore(context, "browser.json", BrowserSettings.serializer(), BrowserSettings())
     val filters = FilterListStore(context, http, browser)
     val search = JsonStore(context, "search.json", SearchSettings.serializer(), SearchSettings())
+    val publish = JsonStore(context, "publish.json", PublishSettings.serializer(), PublishSettings())
+    val shared = JsonStore(context, "shared.json", ListSerializer(SharedItem.serializer()), emptyList())
+    val publisher = Publisher(context, http, publish, shared, secrets)
     private val renderer = WebRenderer(context, filters, browser)
     val repository = Repository(
         context, db.dao(), logDb.dao(), http, http, models, secrets, config, search,
