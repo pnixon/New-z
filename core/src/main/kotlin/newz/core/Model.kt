@@ -7,7 +7,11 @@ import kotlinx.serialization.Serializable
 enum class TrustLevel { TRUSTED, NEUTRAL, LOW, UNRATED, BLOCKED }
 
 @Serializable
-enum class FetchKind { FEED, SELECTORS }
+enum class FetchKind {
+    FEED, SELECTORS,
+    /** A site that web search turned up. Its articles come from searches; the site itself is not fetched. */
+    NONE,
+}
 
 /**
  * How to turn a source into articles.
@@ -29,6 +33,8 @@ data class Recipe(
     val date: String = "",
     /** Elements matching this are removed from the page before extraction. */
     val exclude: String = "",
+    /** Load the page in a hidden browser and let its JavaScript run before reading it. */
+    val render: Boolean = false,
 )
 
 @Serializable

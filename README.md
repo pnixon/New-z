@@ -29,6 +29,14 @@ over earlier ones.
 - **Trust and blocking**: a level per source, set only by you.
 - **Algorithm**: every weight, threshold and rule is editable, and the whole
   configuration exports to and imports from one JSON file.
+- **Interests**: follow a topic to give its articles extra weight, get a
+  notification when a background check finds new ones, and optionally have a
+  web search bring in articles from sites you have not added. Search runs on
+  your own key through a configurable connector (Kagi, Brave and Tavily
+  presets). Sites a search turns up are listed as unrated sources to trust,
+  block or follow.
+- **JavaScript pages**: a listing page that is empty until its scripts run can
+  be loaded in a hidden browser before it is read.
 - **Browser**: articles open in the app, in the phone's own web engine, with
   ad and tracker requests blocked using standard filter lists (EasyList,
   EasyPrivacy, Peter Lowe's) plus your own rules. Each page lists what was

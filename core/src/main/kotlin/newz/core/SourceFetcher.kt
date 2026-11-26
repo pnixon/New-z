@@ -15,7 +15,7 @@ object SourceFetcher {
         headers["User-Agent"] = source.userAgent?.takeIf { it.isNotBlank() } ?: DEFAULT_USER_AGENT
         headers["Accept"] = when (source.recipe.kind) {
             FetchKind.FEED -> "application/rss+xml, application/atom+xml, application/xml;q=0.9, */*;q=0.5"
-            FetchKind.SELECTORS -> "text/html, application/xhtml+xml;q=0.9, */*;q=0.5"
+            FetchKind.SELECTORS, FetchKind.NONE -> "text/html, application/xhtml+xml;q=0.9, */*;q=0.5"
         }
         if (etag != null) headers["If-None-Match"] = etag
         if (lastModified != null) headers["If-Modified-Since"] = lastModified
@@ -30,6 +30,7 @@ object SourceFetcher {
         lastModified: String? = null,
         now: Long = System.currentTimeMillis(),
     ): FetchOutcome {
+        if (source.recipe.kind == FetchKind.NONE) return FetchOutcome.Failed("This site is not fetched; its articles come from web search")
         val response = try {
             http.get(source.recipe.url, requestHeaders(source, etag, lastModified))
         } catch (e: Exception) {
@@ -43,6 +44,7 @@ object SourceFetcher {
                 FetchKind.FEED -> FeedParser.parse(response.body, response.finalUrl, now).items
                 FetchKind.SELECTORS ->
                     RecipeExtractor.extract(Jsoup.parse(response.body, response.finalUrl), source.recipe, now)
+                FetchKind.NONE -> emptyList()
             }
             FetchOutcome.Success(items, response.etag, response.lastModified)
         } catch (e: RecipeException) {

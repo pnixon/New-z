@@ -32,10 +32,25 @@ data class Rule(
 /**
  * A topic is a name and a list of keywords. An article belongs to it when any
  * keyword appears as a whole word or phrase (ignoring case) in the title, the
- * summary, or the source's own tags.
+ * summary, or the source's own tags. An article found by the topic's own web
+ * search carries the topic's name as a tag and belongs to it for that reason.
  */
 @Serializable
-data class Topic(val name: String, val keywords: List<String>)
+data class Topic(
+    val name: String,
+    val keywords: List<String>,
+    /** A followed topic is an interest: its articles gain the interest weight. */
+    val followed: Boolean = false,
+    /** Send a notification when a background check finds new articles in this topic. */
+    val notify: Boolean = false,
+    /** Run a web search for this topic on a schedule and add what it finds. */
+    val search: Boolean = false,
+    /** What to search for. Blank means the topic's name. */
+    val searchQuery: String = "",
+    val searchEveryHours: Int = 6,
+) {
+    val query: String get() = searchQuery.trim().ifEmpty { name.trim() }
+}
 
 /** A topic an article was put in, and the keyword that put it there. */
 data class TopicMatch(val topic: String, val keyword: String)
@@ -52,6 +67,9 @@ object Topics {
         Topic("Sports", listOf("sport", "sports", "football", "soccer", "basketball", "baseball", "tennis", "olympics", "championship", "league", "world cup", "playoff")),
         Topic("Culture", listOf("culture", "arts", "music", "film", "movie", "television", "book", "books", "theatre", "theater", "museum", "celebrity", "album")),
     )
+
+    /** The tag put on an article that a topic's web search found, followed by the topic's name. */
+    const val SEARCH_TAG_PREFIX = "search: "
 
     /** Finds each topic's first matching keyword in an article's text. */
     class Matcher(topics: List<Topic>) {
@@ -72,7 +90,11 @@ object Topics {
                 item.tags.forEach { append(" \n ").append(it) }
             }
             return compiled.mapNotNull { (name, regex) ->
-                regex?.find(text)?.let { TopicMatch(name, it.value.lowercase()) }
+                if (item.tags.any { it.equals(SEARCH_TAG_PREFIX + name, ignoreCase = true) }) {
+                    TopicMatch(name, "found by this topic's web search")
+                } else {
+                    regex?.find(text)?.let { TopicMatch(name, it.value.lowercase()) }
+                }
             }
         }
     }
@@ -85,6 +107,7 @@ object Topics {
  *       + trustWeight    x trustValues[source trust level]
  *       + coverageWeight x min(other sources with the story, coverageSaturation) / coverageSaturation
  *       + readWeight     x (1 if already read, else 0)
+ *       + interestWeight x (1 if in a topic you follow, else 0)
  *       + points from each matching rule
  */
 @Serializable
@@ -101,6 +124,7 @@ data class RankingConfig(
     val coverageWeight: Double = 0.3,
     val coverageSaturation: Int = 3,
     val readWeight: Double = -0.5,
+    val interestWeight: Double = 0.6,
     /** Articles scoring below this are hidden. Null means no cut-off. */
     val minScore: Double? = null,
     /** Articles older than this are hidden. */
@@ -122,6 +146,7 @@ data class RankingConfig(
             trustWeight = 0.0,
             coverageWeight = 0.0,
             readWeight = 0.0,
+            interestWeight = 0.0,
             collapseDuplicates = false,
         )
     }
@@ -175,6 +200,7 @@ object Ranker {
         val activeRules = config.rules.filter { it.enabled && it.contains.isNotBlank() }
         val maxAgeMillis = config.maxAgeDays * 24 * HOUR
 
+        val followed = config.topics.filter { it.followed }.map { it.name.trim() }.toSet()
         val matcher = Topics.Matcher(config.topics)
         val topicsOf = HashMap<Long, List<TopicMatch>>(items.size * 2)
         for (item in items) topicsOf[item.id] = matcher.match(item)
@@ -196,7 +222,7 @@ object Ranker {
         for (cluster in clusters) {
             val scoredCluster = cluster.map { item ->
                 val others = cluster.filter { it.sourceId != item.sourceId }.map { it.sourceName }.distinct().sorted()
-                score(item, others, topicsOf[item.id].orEmpty(), config, activeRules, now)
+                score(item, others, topicsOf[item.id].orEmpty(), followed, config, activeRules, now)
             }
             if (config.collapseDuplicates && scoredCluster.size > 1) {
                 val ordered = scoredCluster.sortedWith(order)
@@ -234,6 +260,7 @@ object Ranker {
         item: RankItem,
         otherSources: List<String>,
         topics: List<TopicMatch>,
+        followed: Set<String>,
         config: RankingConfig,
         rules: List<Rule>,
         now: Long,
@@ -276,6 +303,20 @@ object Ranker {
                 "Already read",
                 if (item.read) "You opened this" else "Not opened yet",
                 read, config.readWeight, read * config.readWeight,
+            )
+        )
+
+        val interests = topics.map { it.topic }.filter { it in followed }
+        val interest = if (interests.isEmpty()) 0.0 else 1.0
+        parts.add(
+            Contribution(
+                "Interest",
+                when {
+                    followed.isEmpty() -> "You follow no topics yet"
+                    interests.isEmpty() -> "In none of the topics you follow"
+                    else -> "In topics you follow: ${interests.joinToString(", ")}"
+                },
+                interest, config.interestWeight, interest * config.interestWeight,
             )
         )
 

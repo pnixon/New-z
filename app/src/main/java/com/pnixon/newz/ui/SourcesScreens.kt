@@ -79,8 +79,11 @@ fun SourcesPage(sources: List<SourceEntity>, onEdit: (Long) -> Unit) {
                 Text(
                     listOf(
                         trust.name.lowercase().replaceFirstChar { it.uppercase() },
-                        if (source.recipe().kind == FetchKind.FEED) "feed" else "scraped page",
-                        "every ${source.refreshMinutes} min",
+                        when (source.recipe().kind) {
+                            FetchKind.FEED -> "feed · every ${source.refreshMinutes} min"
+                            FetchKind.SELECTORS -> (if (source.recipe().render) "rendered page" else "scraped page") + " · every ${source.refreshMinutes} min"
+                            FetchKind.NONE -> "found by web search · site not followed"
+                        },
                     ).joinToString(" · "),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -88,6 +91,7 @@ fun SourcesPage(sources: List<SourceEntity>, onEdit: (Long) -> Unit) {
                 val status = when {
                     trust == TrustLevel.BLOCKED -> "Blocked: not fetched, and its articles are hidden"
                     !source.enabled -> "Paused"
+                    source.recipe().kind == FetchKind.NONE -> "Its articles come from your topic searches. Open it to follow the site itself."
                     source.lastFetchAt == null -> "Not fetched yet"
                     source.isBroken() -> "Broken: ${source.failCount} checks in a row failed. ${source.lastStatus.orEmpty()}"
                     else -> "${source.lastStatus.orEmpty()} · ${ago(source.lastFetchAt ?: 0L)}"
@@ -174,6 +178,7 @@ fun SourceEditScreen(vm: MainViewModel, sourceId: Long?, snackbar: SnackbarHostS
     var image by rememberSaveable { mutableStateOf("") }
     var date by rememberSaveable { mutableStateOf("") }
     var exclude by rememberSaveable { mutableStateOf("") }
+    var render by rememberSaveable { mutableStateOf(false) }
     var trust by rememberSaveable { mutableStateOf(TrustLevel.NEUTRAL) }
     var enabled by rememberSaveable { mutableStateOf(true) }
     var refreshMinutes by rememberSaveable { mutableStateOf("60") }
@@ -191,6 +196,7 @@ fun SourceEditScreen(vm: MainViewModel, sourceId: Long?, snackbar: SnackbarHostS
         image = config.recipe.image
         date = config.recipe.date
         exclude = config.recipe.exclude
+        render = config.recipe.render
         trust = config.trust
         enabled = config.enabled
         refreshMinutes = config.refreshMinutes.toString()
@@ -223,6 +229,7 @@ fun SourceEditScreen(vm: MainViewModel, sourceId: Long?, snackbar: SnackbarHostS
             image = image.trim(),
             date = date.trim(),
             exclude = exclude.trim(),
+            render = render && kind == FetchKind.SELECTORS,
         ),
         trust = trust,
         enabled = enabled,
@@ -325,6 +332,36 @@ fun SourceEditScreen(vm: MainViewModel, sourceId: Long?, snackbar: SnackbarHostS
                 FilterChip(selected = kind == FetchKind.FEED, onClick = { kind = FetchKind.FEED }, label = { Text("Feed (RSS or Atom)") })
                 FilterChip(selected = kind == FetchKind.SELECTORS, onClick = { kind = FetchKind.SELECTORS }, label = { Text("Scraped page") })
             }
+            if (kind == FetchKind.NONE) {
+                Text(
+                    "This site was found by a topic's web search and is not fetched itself. Its trust level and blocking apply to what searches find there. " +
+                        "To follow the site directly, detect how below or choose Feed or Scraped page.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                OutlinedButton(
+                    enabled = !busy && homeUrl.isNotBlank(),
+                    onClick = {
+                        busy = true
+                        error = null
+                        preview = null
+                        val keepName = name
+                        val keepTrust = trust
+                        scope.launch {
+                            vm.discover(homeUrl).fold(
+                                onSuccess = { found ->
+                                    fill(found.source.copy(name = keepName.ifBlank { found.source.name }, trust = keepTrust))
+                                    method = found.method + ". Not saved until you press Save."
+                                    preview = found.preview
+                                },
+                                onFailure = { error = it.message ?: "Detection failed" },
+                            )
+                            busy = false
+                        }
+                    },
+                ) { Text(if (busy) "Detecting…" else "Detect how to follow this site") }
+                method?.let { Text(it, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.primary) }
+            }
             Field(
                 if (kind == FetchKind.FEED) "Feed address" else "Listing page address",
                 url, { url = it }, keyboard = KeyboardType.Uri,
@@ -343,6 +380,18 @@ fun SourceEditScreen(vm: MainViewModel, sourceId: Long?, snackbar: SnackbarHostS
                 Field("Image", image, { image = it }, hint = "Blank: the block's first image")
                 Field("Date", date, { date = it }, hint = "Blank: the time the app first saw the article")
                 Field("Exclude", exclude, { exclude = it }, hint = "Removed from the page first. Example: .sponsored")
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Switch(checked = render, onCheckedChange = { render = it })
+                    Spacer(Modifier.padding(start = 12.dp))
+                    Column {
+                        Text("Run the page's JavaScript first")
+                        Text(
+                            "For pages that are empty until scripts fill them. Loads the page in a hidden browser, which is slower and uses more battery.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
             }
 
             Spacer(Modifier.height(8.dp))
@@ -393,7 +442,7 @@ fun SourceEditScreen(vm: MainViewModel, sourceId: Long?, snackbar: SnackbarHostS
                         busy = true
                         error = null
                         scope.launch {
-                            val result = vm.askModel(url.trim(), sourceId, current().recipe)
+                            val result = vm.askModel(url.trim(), sourceId, current().recipe, render)
                             val written = result.recipe
                             if (written != null) {
                                 item = written.item
@@ -461,6 +510,7 @@ fun SourceEditScreen(vm: MainViewModel, sourceId: Long?, snackbar: SnackbarHostS
                                     when {
                                         old == null -> "unreadable"
                                         old.kind == FetchKind.FEED -> "Feed: ${old.url}"
+                                        old.kind == FetchKind.NONE -> "Not fetched (found by search)"
                                         else -> "Item selector: ${old.item}"
                                     },
                                     style = MaterialTheme.typography.bodySmall,
