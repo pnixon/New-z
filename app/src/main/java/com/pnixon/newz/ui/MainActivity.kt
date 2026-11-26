@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Build
 import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.List
@@ -72,10 +73,11 @@ fun NewzTheme(content: @Composable () -> Unit) {
 }
 
 enum class Tab(val label: String, val title: String, val icon: ImageVector) {
-    FRONT("Front page", "New-z", Icons.Filled.Home),
+    FRONT("Front", "New-z", Icons.Filled.Home),
     FILTERED("Filtered", "Filtered out", Icons.Filled.Clear),
     SOURCES("Sources", "Sources", Icons.Filled.List),
     ALGORITHM("Algorithm", "Algorithm", Icons.Filled.Settings),
+    MODELS("Models", "Models", Icons.Filled.Build),
 }
 
 /** Marks "add a new source" in the editor's saved state. */
@@ -167,6 +169,7 @@ fun NewzRoot(vm: MainViewModel = viewModel()) {
                 Tab.FILTERED -> FilteredPage(state = front, onWhy = { whyArticle = it.item.id })
                 Tab.SOURCES -> SourcesPage(sources = sources, onEdit = { editingSource = it })
                 Tab.ALGORITHM -> AlgorithmPage(vm = vm, config = config)
+                Tab.MODELS -> ModelsPage(vm = vm)
             }
         }
     }

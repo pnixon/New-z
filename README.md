@@ -25,6 +25,13 @@ over earlier ones.
 - **Trust and blocking**: a level per source, set only by you.
 - **Algorithm**: every weight, threshold and rule is editable, and the whole
   configuration exports to and imports from one JSON file.
+- **Models**: optional. With your own API key for any OpenAI-compatible
+  provider, a model writes the recipe when layout detection fails and repairs
+  scraped sources that break. Each answer is run against the real page and
+  only applied if it extracts a plausible article list. The model, request
+  parameters and prompts are all editable, every request is logged in full,
+  and replaced recipes are kept to restore. The key is stored encrypted on the
+  phone and is never exported or backed up.
 
 ## Layout
 

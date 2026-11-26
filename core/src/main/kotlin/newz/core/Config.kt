@@ -5,12 +5,15 @@ import kotlinx.serialization.json.Json
 
 /**
  * Everything that decides what the app shows, as one readable file:
- * the ranking numbers, the rules, and every source with its recipe and trust.
+ * the ranking numbers, the rules, the model settings and prompts, and every
+ * source with its recipe and trust.
  */
 @Serializable
 data class AppConfig(
     val version: Int = 1,
     val ranking: RankingConfig = RankingConfig(),
+    /** Remote model settings and prompts. The API key is never part of this file. */
+    val models: ModelSettings = ModelSettings(),
     val sources: List<SourceConfig> = emptyList(),
 )
 
@@ -27,6 +30,9 @@ object ConfigJson {
 
     fun encodeRanking(config: RankingConfig): String = json.encodeToString(RankingConfig.serializer(), config)
     fun decodeRanking(text: String): RankingConfig = json.decodeFromString(RankingConfig.serializer(), text)
+
+    fun encodeModels(settings: ModelSettings): String = json.encodeToString(ModelSettings.serializer(), settings)
+    fun decodeModels(text: String): ModelSettings = json.decodeFromString(ModelSettings.serializer(), text)
 
     fun encodeRecipe(recipe: Recipe): String = json.encodeToString(Recipe.serializer(), recipe)
     fun decodeRecipe(text: String): Recipe = json.decodeFromString(Recipe.serializer(), text)

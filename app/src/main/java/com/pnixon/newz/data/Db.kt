@@ -113,6 +113,9 @@ interface NewsDao {
     )
     fun articlesSince(since: Long): Flow<List<ArticleEntity>>
 
+    @Query("SELECT title FROM articles WHERE sourceId = :sourceId ORDER BY fetchedAt DESC, id LIMIT :limit")
+    suspend fun recentTitles(sourceId: Long, limit: Int): List<String>
+
     @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun insertArticles(articles: List<ArticleEntity>): List<Long>
 
