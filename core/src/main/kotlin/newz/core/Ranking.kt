@@ -108,6 +108,8 @@ object Topics {
  *       + coverageWeight x min(other sources with the story, coverageSaturation) / coverageSaturation
  *       + readWeight     x (1 if already read, else 0)
  *       + interestWeight x (1 if in a topic you follow, else 0)
+ *       + storyCheckWeight x (claims reported elsewhere - claims contradicted) / claims checked,
+ *                            0 for an article you have not checked
  *       + points from each matching rule
  */
 @Serializable
@@ -125,6 +127,7 @@ data class RankingConfig(
     val coverageSaturation: Int = 3,
     val readWeight: Double = -0.5,
     val interestWeight: Double = 0.6,
+    val storyCheckWeight: Double = 0.4,
     /** Articles scoring below this are hidden. Null means no cut-off. */
     val minScore: Double? = null,
     /** Articles older than this are hidden. */
@@ -149,6 +152,7 @@ data class RankingConfig(
             coverageWeight = 0.0,
             readWeight = 0.0,
             interestWeight = 0.0,
+            storyCheckWeight = 0.0,
             collapseDuplicates = false,
         )
     }
@@ -167,7 +171,29 @@ data class RankItem(
     val summary: String? = null,
     /** The source's own categories for the article. */
     val tags: List<String> = emptyList(),
+    /** The outcome of a story check you ran on this article; null if you have not checked it. */
+    val storyCheck: CheckSummary? = null,
 )
+
+/** A story check reduced to counts, for ranking. */
+data class CheckSummary(val corroborated: Int, val disputed: Int, val unconfirmed: Int) {
+    val claims: Int get() = corroborated + disputed + unconfirmed
+
+    /** From -1 (every claim contradicted) to 1 (every claim reported elsewhere). */
+    val value: Double get() = if (claims == 0) 0.0 else (corroborated - disputed).toDouble() / claims
+
+    companion object {
+        /** Null for a check that failed or found no claims. */
+        fun of(check: FactCheck): CheckSummary? {
+            if (check.error != null || check.claims.isEmpty()) return null
+            return CheckSummary(
+                corroborated = check.claims.count { it.status == ClaimStatus.CORROBORATED },
+                disputed = check.claims.count { it.status == ClaimStatus.DISPUTED },
+                unconfirmed = check.claims.count { it.status == ClaimStatus.UNCONFIRMED },
+            )
+        }
+    }
+}
 
 /** One line of the score: [points] = [raw] x [weight]. */
 data class Contribution(
@@ -319,6 +345,17 @@ object Ranker {
                     else -> "In topics you follow: ${interests.joinToString(", ")}"
                 },
                 interest, config.interestWeight, interest * config.interestWeight,
+            )
+        )
+
+        val check = item.storyCheck
+        val checkValue = check?.value ?: 0.0
+        parts.add(
+            Contribution(
+                "Story check",
+                if (check == null) "You have not checked this story"
+                else "Of ${check.claims} claims: ${check.corroborated} reported elsewhere, ${check.disputed} contradicted, ${check.unconfirmed} not found",
+                checkValue, config.storyCheckWeight, checkValue * config.storyCheckWeight,
             )
         )
 

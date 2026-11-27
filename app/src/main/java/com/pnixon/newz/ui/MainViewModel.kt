@@ -35,6 +35,7 @@ import newz.core.RankResult
 import newz.core.Ranker
 import newz.core.ModelSettings
 import newz.core.AnsyblIdentity
+import newz.core.CheckSummary
 import newz.core.FactCheck
 import newz.core.LlmRequest
 import newz.core.Learner
@@ -113,11 +114,14 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private val _updatingFilters = MutableStateFlow(false)
     val updatingFilters: StateFlow<Boolean> = _updatingFilters
 
+    /** Outcomes of the story checks run so far, by article id. They feed the ranking. */
+    private val summaries = MutableStateFlow<Map<Long, CheckSummary>>(emptyMap())
+
     /** The time scores are calculated for. Moved forward on refresh and once a minute. */
     private val clock = MutableStateFlow(System.currentTimeMillis())
 
     val front: StateFlow<FrontState> =
-        combine(repository.articles(), repository.sources, container.config.flow, clock) { articles, sources, config, now ->
+        combine(repository.articles(), repository.sources, container.config.flow, clock, summaries) { articles, sources, config, now, checked ->
             val byId = sources.associateBy { it.id }
             val items = articles.mapNotNull { a ->
                 val source = byId[a.sourceId] ?: return@mapNotNull null
@@ -133,6 +137,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                     read = a.read,
                     summary = a.summary,
                     tags = a.tags?.split("\n")?.filter { it.isNotBlank() } ?: emptyList(),
+                    storyCheck = checked[a.id],
                 )
             }
             FrontState(Ranker.rank(items, config, now), articles.associateBy { it.id }, loaded = true)
@@ -156,6 +161,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             repository.seedIfNeeded()
             refresh(force = false, announce = false)
         }
+        viewModelScope.launch { summaries.value = runCatching { repository.checkSummaries() }.getOrDefault(emptyMap()) }
         // First launch downloads the filter lists; later launches only when they are due.
         updateFilters(force = false, announce = false)
     }
@@ -361,6 +367,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 FactCheck("", System.currentTimeMillis(), "", emptyList(), error = it.message ?: "The check failed")
             }
             _checks.value = _checks.value + (articleId to result)
+            CheckSummary.of(result)?.let { summaries.value = summaries.value + (articleId to it) }
             _checking.value = _checking.value - articleId
         }
     }

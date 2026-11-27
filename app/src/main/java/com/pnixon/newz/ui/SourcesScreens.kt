@@ -181,6 +181,7 @@ fun SourceEditScreen(vm: MainViewModel, sourceId: Long?, snackbar: SnackbarHostS
     var summary by rememberSaveable { mutableStateOf("") }
     var image by rememberSaveable { mutableStateOf("") }
     var date by rememberSaveable { mutableStateOf("") }
+    var tags by rememberSaveable { mutableStateOf("") }
     var exclude by rememberSaveable { mutableStateOf("") }
     var render by rememberSaveable { mutableStateOf(false) }
     var trust by rememberSaveable { mutableStateOf(TrustLevel.NEUTRAL) }
@@ -199,6 +200,7 @@ fun SourceEditScreen(vm: MainViewModel, sourceId: Long?, snackbar: SnackbarHostS
         summary = config.recipe.summary
         image = config.recipe.image
         date = config.recipe.date
+        tags = config.recipe.tags
         exclude = config.recipe.exclude
         render = config.recipe.render
         trust = config.trust
@@ -232,6 +234,7 @@ fun SourceEditScreen(vm: MainViewModel, sourceId: Long?, snackbar: SnackbarHostS
             summary = summary.trim(),
             image = image.trim(),
             date = date.trim(),
+            tags = tags.trim(),
             exclude = exclude.trim(),
             render = render && kind == FetchKind.SELECTORS,
         ),
@@ -383,6 +386,7 @@ fun SourceEditScreen(vm: MainViewModel, sourceId: Long?, snackbar: SnackbarHostS
                 Field("Summary", summary, { summary = it }, hint = "Blank: no summary")
                 Field("Image", image, { image = it }, hint = "Blank: the block's first image")
                 Field("Date", date, { date = it }, hint = "Blank: the time the app first saw the article")
+                Field("Tags", tags, { tags = it }, hint = "Blank: no tags. Elements naming the section or category")
                 Field("Exclude", exclude, { exclude = it }, hint = "Removed from the page first. Example: .sponsored")
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Switch(checked = render, onCheckedChange = { render = it })
@@ -455,6 +459,7 @@ fun SourceEditScreen(vm: MainViewModel, sourceId: Long?, snackbar: SnackbarHostS
                                 summary = written.summary
                                 image = written.image
                                 date = written.date
+                                tags = written.tags
                                 exclude = written.exclude
                                 preview = result.items
                                 method = "${result.calls.last().model} wrote these selectors in ${result.calls.size} request(s). " +

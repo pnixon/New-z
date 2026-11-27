@@ -31,6 +31,8 @@ data class Recipe(
     val summary: String = "",
     val image: String = "",
     val date: String = "",
+    /** Elements inside the block whose text names the article's section or category. */
+    val tags: String = "",
     /** Elements matching this are removed from the page before extraction. */
     val exclude: String = "",
     /** Load the page in a hidden browser and let its JavaScript run before reading it. */

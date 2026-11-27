@@ -65,6 +65,7 @@ object Prompts {
 - "summary": inside the item, the teaser text. Empty string if there is none.
 - "image": inside the item, the <img>. Empty string to take the first image.
 - "date": inside the item, the element holding the publish time. Empty string if there is none.
+- "tags": inside the item, the elements naming its section or category (such as "Politics"). Empty string if there are none.
 - "exclude": elements to delete from the page first, such as sponsored blocks. Empty string if none.
 
 Ignore navigation, footers, "most read" lists, adverts and sponsored or promoted items.
