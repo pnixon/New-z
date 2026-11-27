@@ -30,6 +30,7 @@ import newz.core.Reader
 import newz.core.LlmClient
 import newz.core.TrackRecord
 import newz.core.AppConfig
+import newz.core.CheckSummary
 import newz.core.PublishSettings
 import newz.core.BrowserSettings
 import newz.core.DEFAULT_USER_AGENT
@@ -530,6 +531,17 @@ class Repository(
             runCatching { ConfigJson.json.decodeFromString(FactCheck.serializer(), file.readText()) }.getOrNull()
         }
         TrackRecord.bySite(checks)
+    }
+
+    /** The outcome of every saved story check, by article id, for ranking. */
+    suspend fun checkSummaries(): Map<Long, CheckSummary> = withContext(Dispatchers.IO) {
+        val out = HashMap<Long, CheckSummary>()
+        for (file in checkDir.listFiles().orEmpty()) {
+            val id = file.name.removeSuffix(".json").toLongOrNull() ?: continue
+            val check = runCatching { ConfigJson.json.decodeFromString(FactCheck.serializer(), file.readText()) }.getOrNull() ?: continue
+            CheckSummary.of(check)?.let { out[id] = it }
+        }
+        out
     }
 
     /** What a story check needs and does not have; null when it can run. */

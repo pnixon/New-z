@@ -62,6 +62,7 @@ private fun listingPage(): String {
           <a class="thumb" href="/news/story-$i"><img data-src="/img/$i.jpg" alt=""></a>
           <h3><a href="/news/story-$i?utm_campaign=home#top">Headline number $i about something that happened today</a></h3>
           <p class="teaser">Teaser text $i.</p>
+          <span class="section">World</span> <span class="section">Region $i</span>
           <time datetime="2026-11-2${i}T09:00:00Z">Nov 2$i</time>
         </article>
         """
@@ -153,6 +154,7 @@ class ScrapingTest {
             summary = "p.teaser",
             image = "img",
             date = "time",
+            tags = "span.section",
         )
         val items = RecipeExtractor.extract(listingPage(), recipe, NOW)
         assertEquals(6, items.size)
@@ -162,6 +164,7 @@ class ScrapingTest {
         assertEquals("Teaser text 1.", first.summary)
         assertEquals("https://daily.example.com/img/1.jpg", first.imageUrl)
         assertEquals(Dates.parse("2026-11-21T09:00:00Z"), first.publishedAt)
+        assertEquals(listOf("World", "Region 1"), first.tags)
     }
 
     @Test

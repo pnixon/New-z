@@ -19,6 +19,7 @@ class RankingTest {
         read: Boolean = false,
         summary: String? = null,
         tags: List<String> = emptyList(),
+        storyCheck: CheckSummary? = null,
     ) = RankItem(
         id = nextId++,
         title = title,
@@ -30,6 +31,7 @@ class RankingTest {
         read = read,
         summary = summary,
         tags = tags,
+        storyCheck = storyCheck,
     )
 
     private fun close(expected: Double, actual: Double) =
@@ -272,5 +274,32 @@ class RankingTest {
         val source = SourceConfig("Found", "https://found.example.com/", Recipe(FetchKind.NONE, "https://found.example.com/"))
         val outcome = SourceFetcher.fetch(source, { _, _ -> error("must not fetch") }, now = NOW)
         assertTrue(outcome is FetchOutcome.Failed)
+    }
+
+    @Test
+    fun aStoryCheckMovesAnArticleByItsOutcome() {
+        val config = RankingConfig(storyCheckWeight = 0.6)
+        val backed = item("Bridge reopens after repairs finish early", storyCheck = CheckSummary(corroborated = 3, disputed = 0, unconfirmed = 0))
+        val unchecked = item("Harbour dredging begins next month")
+        val contradicted = item("Mayor resigns over parking dispute", storyCheck = CheckSummary(corroborated = 0, disputed = 1, unconfirmed = 1))
+        val result = Ranker.rank(listOf(contradicted, unchecked, backed), config, NOW)
+        assertEquals(listOf(backed.id, unchecked.id, contradicted.id), result.visible.map { it.item.id })
+
+        fun line(s: Scored) = s.contributions.single { it.signal == "Story check" }
+        close(0.6, line(result.visible[0]).points)
+        assertEquals("Of 3 claims: 3 reported elsewhere, 0 contradicted, 0 not found", line(result.visible[0]).detail)
+        close(0.0, line(result.visible[1]).points)
+        assertEquals("You have not checked this story", line(result.visible[1]).detail)
+        close(-0.3, line(result.visible[2]).points)
+    }
+
+    @Test
+    fun checkSummaryIgnoresFailedChecks() {
+        fun claim(status: ClaimStatus) = ClaimCheck("c", status, "", emptyList(), 0, 0, false)
+        val ok = FactCheck("https://a.example.com/x", NOW, "m", listOf(claim(ClaimStatus.CORROBORATED), claim(ClaimStatus.UNCONFIRMED)))
+        assertEquals(CheckSummary(1, 0, 1), CheckSummary.of(ok))
+        close(0.5, CheckSummary.of(ok)!!.value)
+        assertEquals(null, CheckSummary.of(ok.copy(error = "HTTP 401")))
+        assertEquals(null, CheckSummary.of(ok.copy(claims = emptyList())))
     }
 }

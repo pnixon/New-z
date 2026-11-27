@@ -45,7 +45,7 @@ private class ScriptedLlm(private vararg val replies: String) : LlmClient {
     }
 }
 
-private const val GOOD = """{"item": "div.card", "title": "a.headline", "link": "a.headline", "summary": "", "image": "img", "date": "time", "exclude": ""}"""
+private const val GOOD = """{"item": "div.card", "title": "a.headline", "link": "a.headline", "summary": "", "image": "img", "date": "time", "tags": "span.kicker", "exclude": ""}"""
 
 class ModelTest {
     private val settings = ModelSettings(model = "small/model", fallbackModel = "big/model")
@@ -98,6 +98,8 @@ class ModelTest {
         assertEquals(FetchKind.SELECTORS, recipe.kind)
         assertEquals(8, result.items.size)
         assertNotNull(result.items[0].publishedAt)
+        assertEquals("span.kicker", recipe.tags)
+        assertEquals(listOf("World"), result.items[0].tags)
 
         val request = llm.requests.single()
         assertEquals("small/model", request.model)

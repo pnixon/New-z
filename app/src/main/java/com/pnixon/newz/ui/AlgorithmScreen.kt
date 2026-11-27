@@ -169,6 +169,7 @@ fun AlgorithmPage(vm: MainViewModel, config: RankingConfig) {
                     "+ ${Ranker.fmt(config.coverageWeight)} × min(other sources, ${config.coverageSaturation}) ÷ ${config.coverageSaturation}\n" +
                     "+ ${Ranker.fmt(config.readWeight)} × (1 if already read)\n" +
                     "+ ${Ranker.fmt(config.interestWeight)} × (1 if in a topic you follow)\n" +
+                    "+ ${Ranker.fmt(config.storyCheckWeight)} × (claims reported elsewhere − contradicted) ÷ claims, if you checked it\n" +
                     "+ points from each of your rules that match",
                 style = MaterialTheme.typography.bodyMedium,
                 fontFamily = FontFamily.Monospace,
@@ -242,6 +243,12 @@ fun AlgorithmPage(vm: MainViewModel, config: RankingConfig) {
         NumberSetting("Interest weight", "Added to articles in a topic you follow. Follow topics in the Topics section below.", config.interestWeight, 0.0, 3.0) { v ->
             vm.updateConfig { it.copy(interestWeight = v) }
         }
+
+        NumberSetting(
+            "Story check weight",
+            "Applies only to articles you ran a story check on. All claims reported elsewhere adds the full weight; all contradicted subtracts it.",
+            config.storyCheckWeight, 0.0, 3.0,
+        ) { v -> vm.updateConfig { it.copy(storyCheckWeight = v) } }
 
         Section("Trust values")
         Text(

@@ -14,8 +14,8 @@ class RecipeException(message: String) : Exception(message)
  *    (h1 to h4) that has text, otherwise the link with the longest text.
  *  - link: the `link` selector's href. Blank means the link the title sits in
  *    or contains, otherwise the first link in the block.
- *  - summary, image, date: only read when a selector is given, except the
- *    image, where blank means the first image in the block.
+ *  - summary, image, date, tags: only read when a selector is given, except
+ *    the image, where blank means the first image in the block.
  */
 object RecipeExtractor {
     fun extract(html: String, recipe: Recipe, now: Long = System.currentTimeMillis()): List<RawItem> =
@@ -42,6 +42,12 @@ object RecipeExtractor {
                     publishedAt = recipe.date.takeIf { it.isNotBlank() }
                         ?.let { block.selectFirst(it) }
                         ?.let { el -> Dates.parse(el.attr("datetime").ifEmpty { el.text() }, now) },
+                    tags = recipe.tags.takeIf { it.isNotBlank() }
+                        ?.let { sel -> block.select(sel).map { it.text().trim() } }
+                        ?.filter { it.length in 2..40 }
+                        ?.distinctBy { it.lowercase() }
+                        ?.take(8)
+                        ?: emptyList(),
                 )
             }
         } catch (e: org.jsoup.select.Selector.SelectorParseException) {

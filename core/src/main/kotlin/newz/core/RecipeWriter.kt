@@ -129,12 +129,12 @@ class RecipeWriter(private val llm: LlmClient, private val settings: ModelSettin
 
     companion object {
         private const val MAX_SELECTOR = 300
-        private val fields = listOf("item", "title", "link", "summary", "image", "date", "exclude")
+        private val fields = listOf("item", "title", "link", "summary", "image", "date", "tags", "exclude")
 
         fun describe(recipe: Recipe): String = buildString {
             append("{")
             append(
-                listOf(recipe.item, recipe.title, recipe.link, recipe.summary, recipe.image, recipe.date, recipe.exclude)
+                listOf(recipe.item, recipe.title, recipe.link, recipe.summary, recipe.image, recipe.date, recipe.tags, recipe.exclude)
                     .mapIndexed { i, value -> "\"${fields[i]}\": ${JsonPrimitive(value)}" }
                     .joinToString(", ")
             )
@@ -164,6 +164,7 @@ class RecipeWriter(private val llm: LlmClient, private val settings: ModelSettin
                 summary = field("summary"),
                 image = field("image"),
                 date = field("date"),
+                tags = field("tags"),
                 exclude = field("exclude"),
             )
         }
